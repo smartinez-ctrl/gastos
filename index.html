@@ -321,18 +321,22 @@ function parseAmexText(rawText){
   // cortando antes de las secciones de Planes de Pagos Diferidos / Puntos / CFDI
   // (esas tienen fechas y montos que NO son transacciones nuevas).
   const startIdx = rawText.search(/Fecha y Detalle de las operaciones/i);
+  const searchFrom = startIdx === -1 ? 0 : startIdx;
   const endMarkers = [
-    /Resumen de Planes de Pagos Diferidos/i,
+    /Resumen de Planes de Pagos Diferidos con Intereses/i,
     /Conoce más de Planea tu Pago/i,
     /Puntos Aeroméxico Rewards/i,
     /Comprobante Fiscal Digital/i,
   ];
   let endIdx = rawText.length;
   endMarkers.forEach(re=>{
-    const m = rawText.search(re);
-    if(m !== -1 && m < endIdx) endIdx = m;
+    // Buscar SOLO después del inicio de la tabla — la página 1 menciona
+    // "Resumen de Planes de Pagos Diferidos" como subtítulo informativo,
+    // antes de que empiece la tabla real, lo cual cortaba la ventana vacía.
+    const m = rawText.slice(searchFrom).search(re);
+    if(m !== -1 && (searchFrom + m) < endIdx) endIdx = searchFrom + m;
   });
-  let windowText = rawText.slice(startIdx === -1 ? 0 : startIdx, endIdx);
+  let windowText = rawText.slice(searchFrom, endIdx);
 
   // Quitar líneas de subtotal que no son transacciones individuales
   windowText = windowText
@@ -370,11 +374,17 @@ function parseAmexText(rawText){
       let segment = text.slice(segStart, segEnd);
 
       if(/PAGO RECIBIDO/i.test(segment)) continue; // pago, no gasto
-      const amounts = [...segment.matchAll(/[\d,]+\.\d{2}/g)];
+      // Quitar el sub-monto en moneda extranjera (Dólar, Corona Sueca, Euro, etc.)
+      // — su posición respecto al monto en MXN varía entre estados de cuenta,
+      // así que se descarta antes de decidir cuál número es el monto real.
+      const segmentForAmount = segment.replace(/(Dólar U\.S\.A\.?|Corona Sueca|Euro|Libra Esterlina)\.?\s*[\d,]+[.,]\d{2}/gi, ' ');
+      const amounts = [...segmentForAmount.matchAll(/[\d,]+\.\d{2}/g)];
       if(amounts.length === 0) continue;
       const last = amounts[amounts.length-1];
-      const afterLast = segment.slice(last.index + last[0].length, last.index + last[0].length + 5);
-      if(/CR/.test(afterLast)) continue; // crédito/abono, no gasto
+      const afterLast = segmentForAmount.slice(last.index + last[0].length, last.index + last[0].length + 6);
+      // "CR" debe aparecer como marcador aislado justo después del monto, no como
+      // substring de un RFC (ej. "RFCRDI841003QJ4" contiene "CR" por coincidencia).
+      if(/^\s*CR\b/.test(afterLast)) continue; // crédito/abono, no gasto
 
       const monto = parseFloat(last[0].replace(/,/g,''));
       if(isNaN(monto) || monto <= 0) continue;
