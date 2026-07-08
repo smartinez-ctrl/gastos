@@ -663,6 +663,7 @@ async function handlePdfUpload(file){
     state.previewRows = parsed.map(p => {
       const key = `${p.fecha}|${Math.round(p.monto*100)}|${detectedCardName.toLowerCase()}|${p.descripcion.toLowerCase().trim()}`;
       const isDup = existingKeys.has(key);
+      existingKeys.add(key); // para detectar también duplicados repetidos dentro del mismo PDF
       return {
         ...p,
         id: uid(),
@@ -1041,6 +1042,7 @@ function renderImport(){
       const key = `${date}|${Math.round(amount*100)}|${(card?card.nombre:'').toLowerCase()}|${desc.toLowerCase().trim()}`;
       const isDup = existingKeys.has(key);
       if(isDup) dupCount++;
+      existingKeys.add(key); // para detectar también duplicados repetidos dentro del mismo pegado
       rows.push({
         id: uid(), include: !isDup, isDup,
         fecha: date, descripcion: desc, monto: amount,
