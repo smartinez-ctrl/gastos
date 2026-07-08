@@ -413,6 +413,26 @@ function parseAmexText(rawText){
   });
   let windowText = rawText.slice(searchFrom, endIdx);
 
+  // El agrupado por fila (extractPdfText) a veces parte "19 de\nDiciembre" en dos
+  // filas visuales distintas cuando el día tiene 2 dígitos y el mes es largo (no
+  // caben en el ancho angosto de esa columna). Eso deja "19 de" pegado a la
+  // descripción/monto de esa fila, y "Diciembre" solo al inicio de la siguiente,
+  // por lo que el regex de fecha nunca hace match y la transacción se pierde por
+  // completo. Aquí se re-junta antes de buscar transacciones.
+  const MESES_NOMBRE = 'Enero|Febrero|Marzo|Abril|Mayo|Junio|Julio|Agosto|Septiembre|Octubre|Noviembre|Diciembre';
+  const mesRe = new RegExp('^(' + MESES_NOMBRE + ')\\b(.*)$', 'i');
+  const wLines = windowText.split('\n');
+  for(let li=0; li<wLines.length-1; li++){
+    const dm = wLines[li].match(/^(\d{1,2}\s+de)\s+(.*)$/i);
+    if(!dm) continue;
+    if(mesRe.test(dm[2].trim())) continue; // ya trae el mes en la misma línea
+    const nm = wLines[li+1].match(mesRe);
+    if(!nm) continue;
+    wLines[li] = `${dm[1]} ${nm[1]} ${dm[2]}`.trim();
+    wLines[li+1] = nm[2].trim();
+  }
+  windowText = wLines.join('\n');
+
   // Quitar líneas de subtotal que no son transacciones individuales
   windowText = windowText
     .replace(/Total de las transacciones en \$ de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
@@ -468,7 +488,7 @@ function parseAmexText(rawText){
       const montoAbs = parseFloat(last[0].replace(/,/g,''));
       if(isNaN(montoAbs) || montoAbs <= 0) continue;
 
-      const cargoMatch = segment.slice(0, last.index).match(/CARGO\s+(\d+)\s+DE\s+(\d+)/i);
+      const cargoMatch = segment.match(/CARGO\s+(\d+)\s+DE\s+(\d+)/i);
       const cuotaActual = cargoMatch ? parseInt(cargoMatch[1], 10) : null;
       const cuotaTotal = cargoMatch ? parseInt(cargoMatch[2], 10) : null;
 
