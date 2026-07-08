@@ -854,6 +854,12 @@ function renderImport(){
       <p class="hint">Alternativa si tu banco aún no tiene parser de PDF. Pega líneas <code>fecha,descripción,monto,tarjeta</code> — una por línea, fecha en <code>YYYY-MM-DD</code>. Categoría se asigna sola por palabra clave. Ejemplo:<br>
       <code>2026-06-14,UBER EATS CDMX,245.50,Amex</code></p>
       <textarea id="csvInput" placeholder="2026-06-14,UBER EATS CDMX,245.50,Amex"></textarea>
+      <div style="margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);text-transform:none;letter-spacing:0;font-family:'Inter'">
+          <input type="checkbox" id="csvNoCategory" style="width:auto">
+          Dejar sin categorizar (no cuenta en totales hasta que le pongas categoría — recomendado para cuentas de débito)
+        </label>
+      </div>
       <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
         <button class="primary" id="parseBtn">Importar líneas</button>
         <span class="small-muted" id="importStatus"></span>
@@ -895,9 +901,13 @@ function renderImport(){
 
   document.getElementById('parseBtn').addEventListener('click', async ()=>{
     const raw = document.getElementById('csvInput').value.trim();
+    const noCategory = document.getElementById('csvNoCategory').checked;
     if(!raw){ showToast('Pega al menos una línea'); return; }
     const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
-    let added = 0, skipped = 0;
+    let added = 0, skipped = 0, dupSkipped = 0;
+    const existingKeys = new Set(state.transactions.map(t =>
+      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.cardName||'').toLowerCase()}|${(t.descripcion||'').toLowerCase().trim()}`
+    ));
     const rows = [];
     for(const line of lines){
       const parts = line.split(',').map(p=>p.trim());
@@ -910,14 +920,16 @@ function renderImport(){
         const { data } = await sb.from('tarjetas').insert({ nombre: cardName }).select().single();
         card = data; state.cards.push(card);
       }
-      rows.push({ fecha:date, descripcion:desc, monto:amount, tarjeta_id: card ? card.id : null, categoria_id: guessCategoryId(desc) });
+      const key = `${date}|${Math.round(amount*100)}|${(card?card.nombre:'').toLowerCase()}|${desc.toLowerCase().trim()}`;
+      if(existingKeys.has(key)){ dupSkipped++; continue; }
+      rows.push({ fecha:date, descripcion:desc, monto:amount, tarjeta_id: card ? card.id : null, categoria_id: noCategory ? null : guessCategoryId(desc) });
       added++;
     }
     if(rows.length){
       const { error } = await sb.from('movimientos').insert(rows);
       if(error){ showToast('Error: '+error.message); return; }
     }
-    document.getElementById('importStatus').textContent = `${added} importados, ${skipped} omitidos`;
+    document.getElementById('importStatus').textContent = `${added} importados, ${skipped} omitidos, ${dupSkipped} posibles duplicados omitidos`;
     document.getElementById('csvInput').value = '';
     showToast(`${added} movimientos importados`);
     await loadAll(); renderMonthStrip();
