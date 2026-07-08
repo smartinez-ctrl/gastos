@@ -285,13 +285,15 @@ function merchantKey(desc){
   return key.length >= 3 ? key : null;
 }
 // Aprende: la próxima vez que aparezca este comercio, se sugiere esta categoría solo.
+// Además, corrige AHORA todos los movimientos ya guardados de ese mismo comercio que
+// sigan en "Otro" o sin categoría — así no hay que repetir la corrección mes a mes.
 // Se llama cada vez que se confirma/edita una categoría (import o edición manual).
 async function learnCategory(categoriaId, descripcion){
   if(!categoriaId) return;
   const key = merchantKey(descripcion);
-  if(!key) return;
+  if(!key){ console.warn('learnCategory: no se pudo generar keyword para', descripcion); return; }
   const target = state.categories.find(c=>c.id===categoriaId);
-  if(!target) return;
+  if(!target){ console.warn('learnCategory: categoría no encontrada', categoriaId); return; }
   const already = (target.keywords||[]).some(k=>k.toLowerCase()===key);
   // Quita el keyword de cualquier OTRA categoría para no generar ambigüedad.
   for(const cat of state.categories){
@@ -299,12 +301,28 @@ async function learnCategory(categoriaId, descripcion){
     if(!(cat.keywords||[]).some(k=>k.toLowerCase()===key)) continue;
     const newKw = cat.keywords.filter(k=>k.toLowerCase()!==key);
     const { error } = await sb.from('categorias').update({ keywords: newKw }).eq('id', cat.id);
-    if(!error) cat.keywords = newKw;
+    if(error){ console.error('learnCategory: error quitando keyword de otra categoría', error); showToast('No se pudo actualizar keywords: '+error.message); }
+    else cat.keywords = newKw;
   }
-  if(already) return;
-  const newKw = [...(target.keywords||[]), key];
-  const { error } = await sb.from('categorias').update({ keywords: newKw }).eq('id', categoriaId);
-  if(!error) target.keywords = newKw;
+  if(!already){
+    const newKw = [...(target.keywords||[]), key];
+    const { error } = await sb.from('categorias').update({ keywords: newKw }).eq('id', categoriaId);
+    if(error){ console.error('learnCategory: error guardando keyword nuevo', error); showToast('No se pudo aprender la categoría: '+error.message); }
+    else{ target.keywords = newKw; console.log('learnCategory: aprendido', key, '→', target.nombre); }
+  }
+  const retroCount = await retroCategorize(categoriaId, key);
+  return retroCount;
+}
+// Recategoriza AHORA todos los movimientos ya guardados que coincidan con el mismo
+// comercio (mismo keyword) y que sigan en "Otro" o sin categoría — nunca toca uno que
+// el usuario ya haya categorizado distinto a propósito. Devuelve cuántos se corrigieron.
+async function retroCategorize(categoriaId, key){
+  const otroCat = state.categories.find(c=>c.nombre==='Otro');
+  let query = sb.from('movimientos').update({ categoria_id: categoriaId }).ilike('descripcion', `%${key}%`).neq('categoria_id', categoriaId);
+  query = otroCat ? query.or(`categoria_id.eq.${otroCat.id},categoria_id.is.null`) : query.is('categoria_id', null);
+  const { data, error } = await query.select('id');
+  if(error){ console.error('retroCategorize error', error); return 0; }
+  return (data||[]).length;
 }
 function catColor(name){
   const c = state.categories.find(c=>c.nombre===name);
@@ -781,8 +799,9 @@ async function confirmPreviewImport(){
   }));
   const { error } = await sb.from('movimientos').insert(inserts);
   if(error){ showToast('Error: '+error.message); return; }
-  for(const r of rows){ await learnCategory(r.category, r.descripcion); }
-  showToast(`${rows.length} movimientos importados`);
+  let retroTotal = 0;
+  for(const r of rows){ retroTotal += (await learnCategory(r.category, r.descripcion)) || 0; }
+  showToast(`${rows.length} movimientos importados` + (retroTotal ? ` · +${retroTotal} anterior(es) recategorizado(s) también` : ''));
   state.previewRows = [];
   state.previewBank = null;
   state.pendingNewCards = [];
@@ -961,9 +980,11 @@ function renderTransactions(){
       if(error){ showToast('Error: '+error.message); return; }
       if(sel.value){
         const tx = state.transactions.find(t=>t.id===sel.dataset.catedit);
-        if(tx) await learnCategory(sel.value, tx.descripcion);
+        const retroCount = tx ? await learnCategory(sel.value, tx.descripcion) : 0;
+        showToast('Categoría actualizada' + (retroCount ? ` · +${retroCount} anterior(es) también` : ''));
+      } else {
+        showToast('Categoría actualizada');
       }
-      showToast('Categoría actualizada');
       await loadAll(); renderAll();
     });
   });
