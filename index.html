@@ -425,8 +425,13 @@ function parseAmexText(rawText){
   });
 }
 
+function detectAmexCardName(rawText){
+  const m = rawText.match(/The\s+(Gold|Platinum|Green|Corporate Platinum|Business)\s*Card/i);
+  return m ? `Amex ${m[1].replace(/\s+/g,' ').trim()}` : 'Amex';
+}
+
 const BANK_PARSERS = [
-  { name: 'American Express', detect: t => /AMERICAN\s*EXPRESS/i.test(t), parse: parseAmexText },
+  { name: 'American Express', detect: t => /AMERICAN\s*EXPRESS/i.test(t), parse: parseAmexText, detectCard: detectAmexCardName },
   // Próximo banco: sube un PDF de ejemplo al chat y se agrega aquí un parser nuevo.
 ];
 
@@ -453,11 +458,24 @@ async function handlePdfUpload(file){
       renderImport();
       return;
     }
+
+    // Detectar/crear la tarjeta a partir del PDF (ej. "Amex Platinum")
+    let defaultCardId = state.cards[0] ? state.cards[0].id : null;
+    if(bankParser.detectCard){
+      const cardName = bankParser.detectCard(text);
+      let card = state.cards.find(c => c.nombre.toLowerCase() === cardName.toLowerCase());
+      if(!card){
+        const { data, error } = await sb.from('tarjetas').insert({ nombre: cardName }).select().single();
+        if(!error && data){ card = data; state.cards.push(card); }
+      }
+      if(card){ defaultCardId = card.id; showToast(`Tarjeta detectada: ${cardName}`); }
+    }
+
     state.previewRows = parsed.map(p => ({
       ...p,
       id: uid(),
       include: true,
-      card: state.cards[0] ? state.cards[0].id : null,
+      card: defaultCardId,
       category: guessCategoryId(p.descripcion),
     }));
     state.previewStatus = '';
@@ -723,9 +741,13 @@ function renderSettings(){
     </div>
     <div class="card">
       <p class="card-title">Categorías</p>
-      <div class="chip-row">${state.categories.map(c=>`<span class="chip"><span class="cat-dot" style="background:${c.color}"></span>${c.nombre} <button data-rmcat="${c.id}">✕</button></span>`).join('')}</div>
-      <div style="display:flex;gap:8px"><input type="text" id="newCat" placeholder="Nueva categoría" style="max-width:240px"><button class="ghost" id="addCatBtn">Agregar categoría</button></div>
-      <p class="hint">Para ajustar palabras clave de auto-categorización, pídemelo en el chat y te actualizo el código.</p>
+      <div class="chip-row">${state.categories.map(c=>`<span class="chip"><span class="cat-dot" style="background:${c.color}"></span>${c.nombre} <button data-editcat="${c.id}" title="Editar palabras clave">✎</button><button data-rmcat="${c.id}">✕</button></span>`).join('')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="newCat" placeholder="Nueva categoría" style="max-width:200px">
+        <input type="text" id="newCatKeywords" placeholder="Palabras clave, separadas por coma (opcional)" style="max-width:320px">
+        <button class="ghost" id="addCatBtn">Agregar categoría</button>
+      </div>
+      <p class="hint">Las palabras clave se comparan contra la descripción del movimiento (sin importar mayúsculas) para asignar categoría sola al importar. Ej. para "Seguros": <code>axa, chubb, zurich, seguro, aseguradora</code></p>
     </div>`;
   document.getElementById('addCardBtn').addEventListener('click', async ()=>{
     const v = document.getElementById('newCard').value.trim();
@@ -737,10 +759,24 @@ function renderSettings(){
   document.getElementById('addCatBtn').addEventListener('click', async ()=>{
     const v = document.getElementById('newCat').value.trim();
     if(!v) return;
+    const kwRaw = document.getElementById('newCatKeywords').value.trim();
+    const keywords = kwRaw ? kwRaw.split(',').map(k=>k.trim().toLowerCase()).filter(Boolean) : [];
     const palette = ['#2F6F5E','#B0472A','#5B6EE1','#8A5FBF','#C9860A','#3C9AA6','#A34E8C'];
-    const { error } = await sb.from('categorias').insert({ nombre: v, color: palette[state.categories.length % palette.length], keywords: [] });
+    const { error } = await sb.from('categorias').insert({ nombre: v, color: palette[state.categories.length % palette.length], keywords });
     if(error){ showToast('Error: '+error.message); return; }
     showToast('Categoría agregada'); await loadAll(); renderAll();
+  });
+  el.querySelectorAll('[data-editcat]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const cat = state.categories.find(c=>c.id===btn.dataset.editcat);
+      const current = (cat.keywords || []).join(', ');
+      const input = window.prompt(`Palabras clave para "${cat.nombre}" (separadas por coma):`, current);
+      if(input === null) return; // canceló
+      const keywords = input.split(',').map(k=>k.trim().toLowerCase()).filter(Boolean);
+      const { error } = await sb.from('categorias').update({ keywords }).eq('id', cat.id);
+      if(error){ showToast('Error: '+error.message); return; }
+      showToast('Palabras clave actualizadas'); await loadAll(); renderAll();
+    });
   });
   el.querySelectorAll('[data-rmcard]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
