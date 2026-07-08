@@ -23,6 +23,7 @@ create table gastos.categorias (
   nombre text not null,
   color text not null default '#767A72',
   keywords text[] not null default '{}',
+  tipo text not null default 'gasto' check (tipo in ('gasto','ingreso')),
   created_at timestamptz not null default now()
 );
 
