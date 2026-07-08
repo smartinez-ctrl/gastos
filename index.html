@@ -441,7 +441,7 @@ function detectAmexCardName(rawText){
 function detectSantanderCard(rawText){
   const m = rawText.match(/Unique Rewards (\w+) Visa/i);
   if(m) return `Santander ${m[1].charAt(0).toUpperCase()+m[1].slice(1).toLowerCase()}`;
-  const acct = rawText.match(/Numero de tarjeta:\s*([\d ]{10,25})/i);
+  const acct = rawText.match(/N[uú]mero de tarjeta:\s*([\d ]{10,25})/i);
   const last4 = acct ? acct[1].replace(/\D/g,'').slice(-4) : null;
   return last4 ? `Santander …${last4}` : 'Santander';
 }
@@ -505,7 +505,7 @@ function parseSantanderCreditText(rawText){
 
 function parseSantanderChecking(rawText){
   const MESES_ABBR = {ene:0,feb:1,mar:2,abr:3,may:4,jun:5,jul:6,ago:7,sep:8,oct:9,nov:10,dic:11};
-  const blockStarts = [...rawText.matchAll(/SALDO FINAL DEL PERIODO ANTERIOR:?\s*\$?\s*([\d,]+\.\d{2})/gi)];
+  const blockStarts = [...rawText.matchAll(/SALDO FINAL DEL PER[IÍ]ODO ANTERIOR:?\s*\$?\s*([\d,]+\.\d{2})/gi)];
   const results = [];
 
   for(let b=0; b<blockStarts.length; b++){
@@ -565,8 +565,8 @@ function parseSantanderChecking(rawText){
 
 const BANK_PARSERS = [
   { name: 'American Express', detect: t => /AMERICAN\s*EXPRESS/i.test(t), parse: parseAmexText, detectCard: detectAmexCardName },
-  { name: 'Santander (tarjeta de crédito)', detect: t => /Santander/i.test(t) && /Numero de tarjeta/i.test(t), parse: parseSantanderCreditText, detectCard: detectSantanderCard },
-  { name: 'Santander (cuenta de débito)', detect: t => /Santander/i.test(t) && /SALDO FINAL DEL PERIODO ANTERIOR/i.test(t) && !/Numero de tarjeta/i.test(t), parse: parseSantanderChecking, detectCard: () => 'Santander Débito', noCategoryGuess: true },
+  { name: 'Santander (tarjeta de crédito)', detect: t => /Santander/i.test(t) && /N[uú]mero de tarjeta/i.test(t), parse: parseSantanderCreditText, detectCard: detectSantanderCard },
+  { name: 'Santander (cuenta de débito)', detect: t => /Santander/i.test(t) && /SALDO FINAL DEL PER[IÍ]ODO ANTERIOR/i.test(t) && !/N[uú]mero de tarjeta/i.test(t), parse: parseSantanderChecking, detectCard: () => 'Santander Débito', noCategoryGuess: true },
   // Próximo banco: sube un PDF de ejemplo al chat y se agrega aquí un parser nuevo.
 ];
 
