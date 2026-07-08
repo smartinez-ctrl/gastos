@@ -117,6 +117,7 @@
     </div>
     <div class="tabbar">
       <button data-view="dashboard" class="active">Panel</button>
+      <button data-view="analisis">Análisis</button>
       <button data-view="transactions">Movimientos</button>
       <button data-view="import">Importar</button>
       <button data-view="settings">Tarjetas y categorías</button>
@@ -126,6 +127,7 @@
   <div class="month-strip" id="monthStrip"></div>
 
   <div id="viewDashboard"></div>
+  <div id="viewAnalisis" style="display:none"></div>
   <div id="viewTransactions" style="display:none"></div>
   <div id="viewImport" style="display:none"></div>
   <div id="viewSettings" style="display:none"></div>
@@ -427,8 +429,9 @@ function parseAmexText(rawText){
 }
 
 function detectAmexCardName(rawText){
-  const m = rawText.match(/The\s+(Gold|Platinum|Green|Corporate Platinum|Business)\s*Card/i);
-  return m ? `Amex ${m[1].replace(/\s+/g,' ').trim()}` : 'Amex';
+  // Gold/Platinum es el mismo número de cuenta, solo cambia de categoría —
+  // se trata como una sola tarjeta "Amex" en vez de crear una por cada tier.
+  return 'Amex';
 }
 
 const BANK_PARSERS = [
@@ -760,13 +763,26 @@ function renderSettings(){
     </div>
     <div class="card">
       <p class="card-title">Categorías</p>
-      <div class="chip-row">${state.categories.map(c=>`<span class="chip"><span class="cat-dot" style="background:${c.color}"></span>${c.nombre} <button data-editcat="${c.id}" title="Editar palabras clave">✎</button><button data-rmcat="${c.id}">✕</button></span>`).join('')}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="text" id="newCat" placeholder="Nueva categoría" style="max-width:200px">
-        <input type="text" id="newCatKeywords" placeholder="Palabras clave, separadas por coma (opcional)" style="max-width:320px">
-        <button class="ghost" id="addCatBtn">Agregar categoría</button>
-      </div>
-      <p class="hint">Las palabras clave se comparan contra la descripción del movimiento (sin importar mayúsculas) para asignar categoría sola al importar. Ej. para "Seguros": <code>axa, chubb, zurich, seguro, aseguradora</code></p>
+      <p class="hint">Edita nombre, color o palabras clave directo en la tabla y dale "Guardar" en esa fila. Las palabras clave se comparan contra la descripción del movimiento (sin mayúsculas) para categorizar solo al importar.</p>
+      <table>
+        <thead><tr><th></th><th>Nombre</th><th>Palabras clave</th><th></th><th></th></tr></thead>
+        <tbody>
+          ${state.categories.map(c=>`
+            <tr data-catrow="${c.id}">
+              <td><input type="color" data-catfield="color" value="${c.color}" style="width:36px;height:30px;padding:2px;border:1px solid var(--line)"></td>
+              <td><input type="text" data-catfield="nombre" value="${c.nombre.replace(/"/g,'&quot;')}" style="min-width:130px"></td>
+              <td><input type="text" data-catfield="keywords" value="${(c.keywords||[]).join(', ').replace(/"/g,'&quot;')}" style="min-width:280px"></td>
+              <td><button class="ghost" data-savecat="${c.id}">Guardar</button></td>
+              <td><button data-rmcat="${c.id}" title="Eliminar" style="background:none;border:none;cursor:pointer;color:var(--muted)">✕</button></td>
+            </tr>`).join('')}
+          <tr>
+            <td></td>
+            <td><input type="text" id="newCat" placeholder="Nueva categoría"></td>
+            <td><input type="text" id="newCatKeywords" placeholder="Palabras clave, separadas por coma"></td>
+            <td colspan="2"><button class="primary" id="addCatBtn">Agregar</button></td>
+          </tr>
+        </tbody>
+      </table>
     </div>`;
   document.getElementById('addCardBtn').addEventListener('click', async ()=>{
     const v = document.getElementById('newCard').value.trim();
@@ -785,16 +801,17 @@ function renderSettings(){
     if(error){ showToast('Error: '+error.message); return; }
     showToast('Categoría agregada'); await loadAll(); renderAll();
   });
-  el.querySelectorAll('[data-editcat]').forEach(btn=>{
+  el.querySelectorAll('[data-savecat]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      const cat = state.categories.find(c=>c.id===btn.dataset.editcat);
-      const current = (cat.keywords || []).join(', ');
-      const input = window.prompt(`Palabras clave para "${cat.nombre}" (separadas por coma):`, current);
-      if(input === null) return; // canceló
-      const keywords = input.split(',').map(k=>k.trim().toLowerCase()).filter(Boolean);
-      const { error } = await sb.from('categorias').update({ keywords }).eq('id', cat.id);
+      const row = el.querySelector(`[data-catrow="${btn.dataset.savecat}"]`);
+      const nombre = row.querySelector('[data-catfield="nombre"]').value.trim();
+      const color = row.querySelector('[data-catfield="color"]').value;
+      const kwRaw = row.querySelector('[data-catfield="keywords"]').value.trim();
+      const keywords = kwRaw ? kwRaw.split(',').map(k=>k.trim().toLowerCase()).filter(Boolean) : [];
+      if(!nombre){ showToast('El nombre no puede quedar vacío'); return; }
+      const { error } = await sb.from('categorias').update({ nombre, color, keywords }).eq('id', btn.dataset.savecat);
       if(error){ showToast('Error: '+error.message); return; }
-      showToast('Palabras clave actualizadas'); await loadAll(); renderAll();
+      showToast('Categoría actualizada'); await loadAll(); renderAll();
     });
   });
   el.querySelectorAll('[data-rmcard]').forEach(btn=>{
@@ -811,14 +828,97 @@ function renderSettings(){
   });
 }
 
+/* ---------- Análisis view ---------- */
+function renderAnalysis(){
+  const el = document.getElementById('viewAnalisis');
+  if(state.transactions.length === 0){
+    el.innerHTML = `<div class="card"><div class="empty-state">Todavía no hay movimientos para analizar. Importa algo primero.</div></div>`;
+    return;
+  }
+
+  // Gasto total por mes (todos los meses con datos, más recientes primero para la tabla,
+  // pero la gráfica se dibuja en orden cronológico)
+  const byMonth = {};
+  state.transactions.forEach(t=>{
+    const mk = monthKey(t.fecha);
+    byMonth[mk] = (byMonth[mk] || 0) + Number(t.monto);
+  });
+  const monthsAsc = Object.keys(byMonth).sort().slice(-12); // últimos 12 con datos
+  const maxMonth = Math.max(...monthsAsc.map(m=>byMonth[m]), 1);
+
+  // Gráfica de barras SVG — meses en X, gasto en Y
+  const chartW = 700, chartH = 220, padL = 10, padB = 34, barGap = 10;
+  const barW = monthsAsc.length ? (chartW - padL*2 - barGap*(monthsAsc.length-1)) / monthsAsc.length : 0;
+  const bars = monthsAsc.map((m, i) => {
+    const val = byMonth[m];
+    const h = (val / maxMonth) * (chartH - padB - 24);
+    const x = padL + i * (barW + barGap);
+    const y = chartH - padB - h;
+    const isCurrent = m === state.currentMonth;
+    return `
+      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}"
+            fill="${isCurrent ? 'var(--accent)' : 'var(--line)'}" rx="2"></rect>
+      <text x="${(x+barW/2).toFixed(1)}" y="${(y-6).toFixed(1)}" text-anchor="middle"
+            font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink-soft)">${(val/1000).toFixed(1)}k</text>
+      <text x="${(x+barW/2).toFixed(1)}" y="${chartH-14}" text-anchor="middle"
+            font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">${monthLabel(m)}</text>
+    `;
+  }).join('');
+
+  // Comparación mes actual vs mes anterior, por categoría
+  const months = allMonths(); // desc
+  const curIdx = months.indexOf(state.currentMonth);
+  const prevMonth = curIdx >= 0 && curIdx+1 < months.length ? months[curIdx+1] : null;
+  const curTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth);
+  const prevTx = prevMonth ? state.transactions.filter(t=>monthKey(t.fecha)===prevMonth) : [];
+  const curByCat = {}, prevByCat = {};
+  curTx.forEach(t=> curByCat[t.catName] = (curByCat[t.catName]||0) + Number(t.monto));
+  prevTx.forEach(t=> prevByCat[t.catName] = (prevByCat[t.catName]||0) + Number(t.monto));
+  const allCatNames = [...new Set([...Object.keys(curByCat), ...Object.keys(prevByCat)])]
+    .sort((a,b) => (curByCat[b]||0) - (curByCat[a]||0));
+
+  el.innerHTML = `
+    <div class="card">
+      <p class="card-title">Gasto mensual — últimos ${monthsAsc.length} meses con datos</p>
+      <svg viewBox="0 0 ${chartW} ${chartH}" style="width:100%;height:auto">
+        ${bars}
+      </svg>
+    </div>
+    <div class="card">
+      <p class="card-title">${monthLabel(state.currentMonth)} vs ${prevMonth ? monthLabel(prevMonth) : 'mes anterior (sin datos)'}, por categoría</p>
+      ${allCatNames.length === 0 ? `<div class="empty-state">Sin datos suficientes todavía.</div>` : `
+      <table>
+        <thead><tr><th>Categoría</th><th style="text-align:right">${monthLabel(state.currentMonth)}</th><th style="text-align:right">${prevMonth ? monthLabel(prevMonth) : '—'}</th><th style="text-align:right">Cambio</th></tr></thead>
+        <tbody>
+          ${allCatNames.map(name=>{
+            const cur = curByCat[name] || 0;
+            const prev = prevByCat[name] || 0;
+            const delta = prev > 0 ? ((cur-prev)/prev*100) : (cur > 0 ? 100 : 0);
+            const deltaColor = delta > 0 ? 'var(--alert)' : (delta < 0 ? 'var(--accent)' : 'var(--muted)');
+            const arrow = delta > 0.5 ? '▲' : (delta < -0.5 ? '▼' : '·');
+            return `
+            <tr>
+              <td><span class="cat-dot" style="background:${catColor(name)};display:inline-block;margin-right:6px"></span>${name}</td>
+              <td class="amt-cell">${fmtMoney(cur)}</td>
+              <td class="amt-cell" style="color:var(--muted)">${fmtMoney(prev)}</td>
+              <td class="amt-cell" style="color:${deltaColor}">${arrow} ${Math.abs(delta).toFixed(0)}%</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+}
+
 /* ---------- View switching ---------- */
 function renderAll(){
   renderMonthStrip();
   document.getElementById('viewDashboard').style.display = state.currentView==='dashboard' ? '' : 'none';
+  document.getElementById('viewAnalisis').style.display = state.currentView==='analisis' ? '' : 'none';
   document.getElementById('viewTransactions').style.display = state.currentView==='transactions' ? '' : 'none';
   document.getElementById('viewImport').style.display = state.currentView==='import' ? '' : 'none';
   document.getElementById('viewSettings').style.display = state.currentView==='settings' ? '' : 'none';
   if(state.currentView==='dashboard') renderDashboard();
+  if(state.currentView==='analisis') renderAnalysis();
   if(state.currentView==='transactions') renderTransactions();
   if(state.currentView==='import') renderImport();
   if(state.currentView==='settings') renderSettings();
