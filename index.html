@@ -231,6 +231,7 @@ async function loadAll(){
 }
 
 /* ---------- Utils ---------- */
+function uid(){ return Math.random().toString(36).slice(2,10); }
 function fmtMoney(n){
   const neg = n < 0;
   const v = Math.abs(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
