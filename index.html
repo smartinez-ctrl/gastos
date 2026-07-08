@@ -269,7 +269,8 @@ function merchantKey(desc){
   const words = desc.toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // quita acentos
     .split(/\s+/)
-    .filter(w => w && !/\d/.test(w) && w.length >= 3);
+    .map(w => w.replace(/[^a-z]/g, '')) // quita paréntesis, slashes, dígitos pegados, etc.
+    .filter(w => w && w.length >= 3);
   if(words.length === 0) return null;
   const key = words.slice(0, 3).join(' ').trim();
   return key.length >= 3 ? key : null;
@@ -428,10 +429,13 @@ function parseAmexText(rawText){
       const afterLast = segmentForAmount.slice(last.index + last[0].length, last.index + last[0].length + 6);
       // "CR" debe aparecer como marcador aislado justo después del monto, no como
       // substring de un RFC (ej. "RFCRDI841003QJ4" contiene "CR" por coincidencia).
-      if(/^\s*CR\b/.test(afterLast)) continue; // crédito/abono, no gasto
+      // Un CR puede ser un pago que le hiciste a la tarjeta (se excluye) o un cargo
+      // que el comercio te regresó/reembolsó (sí se importa, en negativo, para que
+      // se reste del gasto original en vez de desaparecer sin dejar rastro).
+      const isCredit = /^\s*CR\b/.test(afterLast);
 
-      const monto = parseFloat(last[0].replace(/,/g,''));
-      if(isNaN(monto) || monto <= 0) continue;
+      const montoAbs = parseFloat(last[0].replace(/,/g,''));
+      if(isNaN(montoAbs) || montoAbs <= 0) continue;
 
       let desc = segment.slice(0, last.index)
         .replace(/RFC\S+/gi, ' ')
@@ -443,6 +447,9 @@ function parseAmexText(rawText){
         .slice(0, 80);
       if(!desc) desc = 'Movimiento sin descripción';
 
+      if(isCredit && /PAGO|TRANSFEREN|DEPOSITO/i.test(desc)) continue; // pago a la tarjeta, no un reembolso
+      const monto = isCredit ? -montoAbs : montoAbs;
+
       const dia = parseInt(m[1], 10);
       const mesTxt = m[2].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').slice(0,3);
       const mesIdx = MESES_ABBR[mesTxt];
@@ -453,7 +460,7 @@ function parseAmexText(rawText){
 
       const fecha = `${year}-${String(mesIdx+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
       results.push({
-        fecha, descripcion: desc + (isSecondary && holderName ? ` (${holderName.split(' ')[0]})` : ''),
+        fecha, descripcion: desc + (isCredit ? ' (reembolso/cargo regresado)' : '') + (isSecondary && holderName ? ` (${holderName.split(' ')[0]})` : ''),
         monto,
       });
     }
@@ -515,10 +522,12 @@ function parseSantanderCreditText(rawText){
     const signed = [...segment.matchAll(/([+-])\s*\$\s*([\d,]+\.\d{2})/g)];
     if(signed.length === 0) continue;
     const last = signed[signed.length-1];
-    if(last[1] === '-') continue; // pago/abono, no gasto
+    // Un signo "-" puede ser un pago que le hiciste a la tarjeta (se excluye) o un
+    // cargo que el comercio te regresó/reembolsó (sí se importa, en negativo).
+    const isCredit = last[1] === '-';
 
-    const monto = parseFloat(last[2].replace(/,/g,''));
-    if(isNaN(monto) || monto <= 0) continue;
+    const montoAbs = parseFloat(last[2].replace(/,/g,''));
+    if(isNaN(montoAbs) || montoAbs <= 0) continue;
 
     let desc = segment.slice(0, last.index)
       .replace(/[A-Z]{2,4}\d[\dA-Z]{5,12}/g, ' ')
@@ -527,6 +536,9 @@ function parseSantanderCreditText(rawText){
       .trim()
       .slice(0, 80);
     if(!desc) desc = 'Movimiento sin descripción';
+
+    if(isCredit && /PAGO|TRANSFEREN|DEPOSITO/i.test(desc)) continue; // pago a la tarjeta, no un reembolso
+    const monto = isCredit ? -montoAbs : montoAbs;
 
     let tipo = 'titular';
     for(const h of headings){ if(h.idx < m.index) tipo = h.tipo; else break; }
@@ -538,7 +550,7 @@ function parseSantanderCreditText(rawText){
     if(mesIdx === undefined) continue;
     const fecha = `${year}-${String(mesIdx+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
 
-    results.push({ fecha, descripcion: desc + (tipo === 'adicional' ? ' (adicional)' : ''), monto });
+    results.push({ fecha, descripcion: desc + (isCredit ? ' (reembolso/cargo regresado)' : '') + (tipo === 'adicional' ? ' (adicional)' : ''), monto });
   }
   return results;
 }
