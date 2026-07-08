@@ -806,9 +806,10 @@ function renderMonthStrip(){
 function renderDashboard(){
   const el = document.getElementById('viewDashboard');
   const monthTxAll = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth);
-  const monthTx = monthTxAll.filter(t=>t.catName && t.catTipo!=='ingreso'); // solo gasto categorizado cuenta
+  const monthTx = monthTxAll.filter(t=>t.catTipo==='gasto'); // solo gasto categorizado cuenta
   const monthIngreso = monthTxAll.filter(t=>t.catTipo==='ingreso');
-  const uncatCount = monthTxAll.length - monthTx.length - monthIngreso.length;
+  const monthNeutral = monthTxAll.filter(t=>t.catTipo==='neutral');
+  const uncatCount = monthTxAll.length - monthTx.length - monthIngreso.length - monthNeutral.length;
   const total = monthTx.reduce((s,t)=>s+Number(t.monto),0);
   const totalIngreso = monthIngreso.reduce((s,t)=>s+Number(t.monto),0);
   const byCard = {}, byCat = {};
@@ -927,7 +928,7 @@ function renderTransactions(){
                   ${state.categories.map(c=>`<option value="${c.id}" ${c.id===t.categoria_id?'selected':''}>${c.nombre}</option>`).join('')}
                 </select>
               </td>
-              <td class="amt-cell" style="${t.catTipo==='ingreso'?'color:var(--accent)':''}">${fmtMoney(Number(t.monto))}</td>
+              <td class="amt-cell" style="${t.catTipo==='ingreso'?'color:var(--accent)':(t.catTipo==='neutral'?'color:var(--muted)':'')}">${fmtMoney(Number(t.monto))}</td>
               <td class="row-actions"><button data-del="${t.id}" title="Eliminar">✕</button></td>
             </tr>`).join('')}
         </tbody>
@@ -1155,7 +1156,7 @@ function renderSettings(){
     </div>
     <div class="card">
       <p class="card-title">Categorías</p>
-      <p class="hint">Edita nombre, tipo, color o palabras clave directo en la tabla y dale "Guardar" en esa fila. Las palabras clave se comparan contra la descripción del movimiento (sin mayúsculas) para categorizar solo al importar. Marca una categoría como <strong>Ingreso</strong> (ej. "Nómina", "Reembolsos") para que sume aparte y no se mezcle con tu gasto — verás Ingreso total y Balance neto en el Dashboard.</p>
+      <p class="hint">Edita nombre, tipo, color o palabras clave directo en la tabla y dale "Guardar" en esa fila. Las palabras clave se comparan contra la descripción del movimiento (sin mayúsculas) para categorizar solo al importar. Marca una categoría como <strong>Ingreso</strong> (ej. "Nómina", "Reembolsos") para que sume aparte y no se mezcle con tu gasto. Marca <strong>No cuenta</strong> (ej. "Traspasos entre mis cuentas") para movimientos que no son ni gasto ni ingreso real — quedan registrados pero no suman ni restan en ningún total.</p>
       <table>
         <thead><tr><th></th><th>Nombre</th><th>Tipo</th><th>Palabras clave</th><th></th><th></th></tr></thead>
         <tbody>
@@ -1166,6 +1167,7 @@ function renderSettings(){
               <td><select data-catfield="tipo" style="min-width:90px">
                 <option value="gasto" ${(c.tipo||'gasto')==='gasto'?'selected':''}>Gasto</option>
                 <option value="ingreso" ${c.tipo==='ingreso'?'selected':''}>Ingreso</option>
+                <option value="neutral" ${c.tipo==='neutral'?'selected':''}>No cuenta</option>
               </select></td>
               <td><input type="text" data-catfield="keywords" value="${(c.keywords||[]).join(', ').replace(/"/g,'&quot;')}" style="min-width:280px"></td>
               <td><button class="ghost" data-savecat="${c.id}">Guardar</button></td>
@@ -1177,6 +1179,7 @@ function renderSettings(){
             <td><select id="newCatTipo" style="min-width:90px">
               <option value="gasto" selected>Gasto</option>
               <option value="ingreso">Ingreso</option>
+              <option value="neutral">No cuenta</option>
             </select></td>
             <td><input type="text" id="newCatKeywords" placeholder="Palabras clave, separadas por coma"></td>
             <td colspan="2"><button class="primary" id="addCatBtn">Agregar</button></td>
