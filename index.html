@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <style>
   :root{
     --paper: #EDEFEA; --paper-raised: #F6F7F3; --ink: #1C2321; --ink-soft: #4B534E;
@@ -76,6 +77,26 @@
   .login-screen input{margin-bottom:10px;}
   #logoutBtn{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;}
   ::selection{background:var(--accent-soft);}
+  .dropzone{
+    border:1.5px dashed var(--line);border-radius:var(--radius);padding:24px;text-align:center;
+    cursor:pointer;background:var(--paper);transition:border-color .15s ease;
+  }
+  .dropzone:hover, .dropzone.drag{border-color:var(--accent);background:var(--accent-soft);}
+  .dropzone input{display:none;}
+  .dropzone .dz-label{font-size:13px;color:var(--ink-soft);}
+  .dropzone .dz-sub{font-size:11px;color:var(--muted);margin-top:4px;}
+  .preview-table td, .preview-table th{padding:6px 8px;}
+  .preview-table input, .preview-table select{font-size:12px;padding:5px 6px;}
+  .preview-table .excl{opacity:.4;}
+  .bank-badge{
+    display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    padding:2px 8px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin-left:8px;
+  }
+  .spinner{
+    width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;
+    display:inline-block;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
@@ -142,7 +163,14 @@ let state = {
   categories: [],       // {id, nombre, color, keywords}
   currentMonth: null,
   currentView: 'dashboard',
+  previewRows: [],     // parsed-but-unconfirmed rows from a PDF upload
+  previewBank: null,
+  previewStatus: '',   // status/progress text while parsing
 };
+
+if(window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+}
 
 /* ---------- Auth ---------- */
 async function initAuth(){
@@ -236,6 +264,194 @@ function allMonths(){
   const set = new Set(state.transactions.map(t=>monthKey(t.fecha)));
   const arr = [...set].sort().reverse();
   return arr.length ? arr : [new Date().toISOString().slice(0,7)];
+}
+
+/* ============================================================
+   Parsers de estados de cuenta en PDF, por banco.
+   Cada parser: detect(text) -> bool, parse(text) -> [{fecha, descripcion, monto, cardholder}]
+   Para agregar un banco nuevo: sube un PDF de ejemplo a Claude en el chat
+   y pide que le agregue el parser aquí.
+   ============================================================ */
+const MESES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+async function extractPdfText(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  let full = '';
+  for(let i=1; i<=pdf.numPages; i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    full += content.items.map(it=>it.str).join(' ') + ' \n ';
+  }
+  return full;
+}
+
+function parseAmexText(rawText){
+  // Año del corte, para resolver el año de cada movimiento
+  const corteMatch = rawText.match(/(\d{2})-([A-Za-zé]{3,4})-(\d{4})/);
+  let corteYear = new Date().getFullYear();
+  let corteMonthIdx = new Date().getMonth();
+  const MESES_ABBR = {ene:0,feb:1,mar:2,abr:3,may:4,jun:5,jul:6,ago:7,sep:8,oct:9,nov:10,dic:11};
+  if(corteMatch){
+    corteYear = parseInt(corteMatch[3], 10);
+    const abbr = corteMatch[2].toLowerCase().slice(0,3);
+    if(MESES_ABBR[abbr] !== undefined) corteMonthIdx = MESES_ABBR[abbr];
+  }
+
+  // Ventana de parseo: solo las páginas de "Fecha y Detalle de las operaciones",
+  // cortando antes de las secciones de Planes de Pagos Diferidos / Puntos / CFDI
+  // (esas tienen fechas y montos que NO son transacciones nuevas).
+  const startIdx = rawText.search(/Fecha y Detalle de las operaciones/i);
+  const endMarkers = [
+    /Resumen de Planes de Pagos Diferidos/i,
+    /Conoce más de Planea tu Pago/i,
+    /Puntos Aeroméxico Rewards/i,
+    /Comprobante Fiscal Digital/i,
+  ];
+  let endIdx = rawText.length;
+  endMarkers.forEach(re=>{
+    const m = rawText.search(re);
+    if(m !== -1 && m < endIdx) endIdx = m;
+  });
+  let windowText = rawText.slice(startIdx === -1 ? 0 : startIdx, endIdx);
+
+  // Quitar líneas de subtotal que no son transacciones individuales
+  windowText = windowText
+    .replace(/Total de las transacciones en \$ de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total de Cargos en Moneda Extranjera de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total de Cargos para[^\n]*?(?=\d{1,2}\s+de\s+[A-Za-zé]+)/gi, ' ');
+
+  // Detectar bloques por tarjetahabiente ("Nuevos cargos y abonos de X")
+  // Se compara por número de cuenta (más confiable que el nombre, que a veces
+  // no queda bien delimitado en el texto extraído del PDF).
+  const holderSplit = windowText.split(/Nuevos cargos y abonos de\s+/i);
+  const acctMatches = [...rawText.matchAll(/Número de Cuenta\s*([\d-]{8,20})/gi)];
+  const primaryAccount = acctMatches.length ? acctMatches[0][1] : null;
+
+  const results = [];
+  const dateAnchor = /(\d{1,2})\s+de\s+([A-Za-zé]{3,12})\b/gi;
+
+  holderSplit.forEach((block, blockIdx) => {
+    let holderName = null;
+    let holderAccount = null;
+    let text = block;
+    if(blockIdx > 0){
+      const nameMatch = block.match(/^([A-ZÁÉÍÓÚÑ ]{6,60})\s*Número de Cuenta/i);
+      holderName = nameMatch ? nameMatch[1].trim() : null;
+      const acctMatch = block.match(/Número de Cuenta\s*([\d-]{8,20})/i);
+      holderAccount = acctMatch ? acctMatch[1] : null;
+    }
+    const isSecondary = holderAccount && primaryAccount && holderAccount !== primaryAccount;
+
+    const matches = [...text.matchAll(dateAnchor)];
+    for(let i=0; i<matches.length; i++){
+      const m = matches[i];
+      const segStart = m.index + m[0].length;
+      const segEnd = i+1 < matches.length ? matches[i+1].index : Math.min(text.length, segStart + 400);
+      let segment = text.slice(segStart, segEnd);
+
+      if(/PAGO RECIBIDO/i.test(segment)) continue; // pago, no gasto
+      const amounts = [...segment.matchAll(/[\d,]+\.\d{2}/g)];
+      if(amounts.length === 0) continue;
+      const last = amounts[amounts.length-1];
+      const afterLast = segment.slice(last.index + last[0].length, last.index + last[0].length + 5);
+      if(/CR/.test(afterLast)) continue; // crédito/abono, no gasto
+
+      const monto = parseFloat(last[0].replace(/,/g,''));
+      if(isNaN(monto) || monto <= 0) continue;
+
+      let desc = segment.slice(0, last.index)
+        .replace(/RFC\S+/gi, ' ')
+        .replace(/\/?REF\S+/gi, ' ')
+        .replace(/Dólar U\.S\.A\.?\s*[\d,]+\.\d{2}/gi, ' ')
+        .replace(/CARGO\s+\d+\s+DE\s+\d+/gi, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 80);
+      if(!desc) desc = 'Movimiento sin descripción';
+
+      const dia = parseInt(m[1], 10);
+      const mesTxt = m[2].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').slice(0,3);
+      const mesIdx = MESES_ABBR[mesTxt];
+      if(mesIdx === undefined) continue;
+      let year = corteYear;
+      const prevMonthIdx = (corteMonthIdx - 1 + 12) % 12;
+      if(mesIdx === prevMonthIdx && corteMonthIdx === 0) year = corteYear - 1;
+
+      const fecha = `${year}-${String(mesIdx+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+      results.push({
+        fecha, descripcion: desc + (isSecondary && holderName ? ` (${holderName.split(' ')[0]})` : ''),
+        monto,
+      });
+    }
+  });
+
+  // de-dup exacto (misma fecha+desc+monto) por si el split de holders duplicó algo
+  const seen = new Set();
+  return results.filter(r=>{
+    const key = r.fecha+'|'+r.descripcion+'|'+r.monto;
+    if(seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+}
+
+const BANK_PARSERS = [
+  { name: 'American Express', detect: t => /AMERICAN\s*EXPRESS/i.test(t), parse: parseAmexText },
+  // Próximo banco: sube un PDF de ejemplo al chat y se agrega aquí un parser nuevo.
+];
+
+async function handlePdfUpload(file){
+  state.previewStatus = 'Leyendo PDF...';
+  renderImport();
+  try{
+    const text = await extractPdfText(file);
+    const bankParser = BANK_PARSERS.find(b => b.detect(text));
+    if(!bankParser){
+      state.previewStatus = '';
+      state.previewRows = [];
+      showToast('Banco no reconocido todavía — súbeme este PDF al chat y le enseño el formato');
+      renderImport();
+      return;
+    }
+    state.previewBank = bankParser.name;
+    const parsed = bankParser.parse(text);
+    if(parsed.length === 0){
+      state.previewStatus = '';
+      showToast('No encontré movimientos en este PDF — revisa que sea el estado de cuenta completo');
+      renderImport();
+      return;
+    }
+    state.previewRows = parsed.map(p => ({
+      ...p,
+      id: uid(),
+      include: true,
+      card: state.cards[0] ? state.cards[0].id : null,
+      category: guessCategoryId(p.descripcion),
+    }));
+    state.previewStatus = '';
+    renderImport();
+  }catch(err){
+    state.previewStatus = '';
+    showToast('Error leyendo el PDF: ' + err.message);
+    renderImport();
+  }
+}
+
+async function confirmPreviewImport(){
+  const rows = state.previewRows.filter(r=>r.include);
+  if(rows.length === 0){ showToast('No hay filas seleccionadas'); return; }
+  const inserts = rows.map(r => ({
+    fecha: r.fecha, descripcion: r.descripcion, monto: r.monto,
+    tarjeta_id: r.card, categoria_id: r.category,
+  }));
+  const { error } = await sb.from('movimientos').insert(inserts);
+  if(error){ showToast('Error: '+error.message); return; }
+  showToast(`${rows.length} movimientos importados`);
+  state.previewRows = [];
+  state.previewBank = null;
+  await loadAll();
+  renderMonthStrip();
+  renderImport();
 }
 
 /* ---------- Month strip ---------- */
@@ -342,10 +558,48 @@ function renderTransactions(){
 /* ---------- Import view ---------- */
 function renderImport(){
   const el = document.getElementById('viewImport');
+
+  const previewSection = state.previewRows.length ? `
+    <div class="card">
+      <div class="flex-between">
+        <p class="card-title" style="margin:0">Revisa antes de importar <span class="bank-badge">${state.previewBank}</span></p>
+        <span class="small-muted">${state.previewRows.filter(r=>r.include).length} de ${state.previewRows.length} seleccionados</span>
+      </div>
+      <p class="hint">El parser de PDF es beta — revisa montos y fechas antes de confirmar. Desmarca lo que no quieras importar.</p>
+      <table class="preview-table">
+        <thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th></tr></thead>
+        <tbody>
+          ${state.previewRows.map(r=>`
+            <tr class="${r.include?'':'excl'}" data-pid="${r.id}">
+              <td><input type="checkbox" data-pchk="${r.id}" ${r.include?'checked':''}></td>
+              <td><input type="date" data-pfield="fecha" data-pid2="${r.id}" value="${r.fecha}" style="width:130px"></td>
+              <td><input type="text" data-pfield="descripcion" data-pid2="${r.id}" value="${r.descripcion.replace(/"/g,'&quot;')}"></td>
+              <td><input type="number" step="0.01" data-pfield="monto" data-pid2="${r.id}" value="${r.monto}" style="width:90px"></td>
+              <td><select data-pfield="card" data-pid2="${r.id}">${state.cards.map(c=>`<option value="${c.id}" ${c.id===r.card?'selected':''}>${c.nombre}</option>`).join('')}</select></td>
+              <td><select data-pfield="category" data-pid2="${r.id}">${state.categories.map(c=>`<option value="${c.id}" ${c.id===r.category?'selected':''}>${c.nombre}</option>`).join('')}</select></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:12px;display:flex;gap:10px">
+        <button class="primary" id="confirmPreviewBtn">Importar seleccionados</button>
+        <button class="ghost" id="cancelPreviewBtn">Cancelar</button>
+      </div>
+    </div>` : '';
+
   el.innerHTML = `
     <div class="card">
-      <p class="card-title">Importar movimientos (CSV)</p>
-      <p class="hint">Pega líneas <code>fecha,descripción,monto,tarjeta</code> — una por línea, fecha en <code>YYYY-MM-DD</code>. Categoría se asigna sola por palabra clave. Ejemplo:<br>
+      <p class="card-title">Subir PDF de estado de cuenta</p>
+      <label class="dropzone" id="dropzone" for="pdfFileInput">
+        ${state.previewStatus ? `<span class="dz-label"><span class="spinner"></span>${state.previewStatus}</span>` : `
+        <span class="dz-label">Arrastra el PDF aquí o haz clic para elegir el archivo</span>
+        <div class="dz-sub">Bancos soportados hoy: ${BANK_PARSERS.map(b=>b.name).join(', ')}. Otro banco: súbelo al chat primero.</div>`}
+        <input type="file" id="pdfFileInput" accept="application/pdf">
+      </label>
+    </div>
+    ${previewSection}
+    <div class="card">
+      <p class="card-title">Importar movimientos (CSV manual)</p>
+      <p class="hint">Alternativa si tu banco aún no tiene parser de PDF. Pega líneas <code>fecha,descripción,monto,tarjeta</code> — una por línea, fecha en <code>YYYY-MM-DD</code>. Categoría se asigna sola por palabra clave. Ejemplo:<br>
       <code>2026-06-14,UBER EATS CDMX,245.50,Amex</code></p>
       <textarea id="csvInput" placeholder="2026-06-14,UBER EATS CDMX,245.50,Amex"></textarea>
       <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
@@ -353,6 +607,40 @@ function renderImport(){
         <span class="small-muted" id="importStatus"></span>
       </div>
     </div>`;
+
+  document.getElementById('pdfFileInput').addEventListener('change', (e)=>{
+    if(e.target.files[0]) handlePdfUpload(e.target.files[0]);
+  });
+  const dz = document.getElementById('dropzone');
+  dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
+  dz.addEventListener('dragleave', ()=> dz.classList.remove('drag'));
+  dz.addEventListener('drop', e=>{
+    e.preventDefault(); dz.classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if(f && f.type === 'application/pdf') handlePdfUpload(f);
+  });
+
+  if(state.previewRows.length){
+    el.querySelectorAll('[data-pchk]').forEach(chk=>{
+      chk.addEventListener('change', ()=>{
+        const row = state.previewRows.find(r=>r.id===chk.dataset.pchk);
+        row.include = chk.checked;
+        renderImport();
+      });
+    });
+    el.querySelectorAll('[data-pfield]').forEach(inp=>{
+      inp.addEventListener('change', ()=>{
+        const row = state.previewRows.find(r=>r.id===inp.dataset.pid2);
+        const field = inp.dataset.pfield;
+        row[field] = field === 'monto' ? parseFloat(inp.value) : inp.value;
+      });
+    });
+    document.getElementById('confirmPreviewBtn').addEventListener('click', confirmPreviewImport);
+    document.getElementById('cancelPreviewBtn').addEventListener('click', ()=>{
+      state.previewRows = []; state.previewBank = null; renderImport();
+    });
+  }
+
   document.getElementById('parseBtn').addEventListener('click', async ()=>{
     const raw = document.getElementById('csvInput').value.trim();
     if(!raw){ showToast('Pega al menos una línea'); return; }
