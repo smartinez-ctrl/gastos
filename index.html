@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger — Control de gastos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --paper: #EDEFEA; --paper-raised: #F6F7F3; --ink: #1C2321; --ink-soft: #4B534E;
+    --muted: #767A72; --line: #D3D6CC; --accent: #2F6F5E; --accent-soft: #DCE8E2;
+    --alert: #B0472A; --alert-soft: #F3DFD7; --radius: 3px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 20px 80px;}
+  header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:28px;flex-wrap:wrap;gap:12px;}
+  h1{font-family:'Fraunces',serif;font-weight:600;font-size:32px;margin:0;letter-spacing:-0.01em;}
+  h1 .accent-dot{color:var(--accent);}
+  .subtitle{color:var(--muted);font-size:13px;margin-top:2px;}
+  .tabbar{display:flex;background:var(--paper-raised);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;}
+  .tabbar button{font-family:'Inter';font-size:13px;font-weight:500;color:var(--ink-soft);background:none;border:none;padding:9px 16px;cursor:pointer;border-right:1px solid var(--line);}
+  .tabbar button:last-child{border-right:none;}
+  .tabbar button.active{background:var(--ink);color:var(--paper);}
+  .month-strip{display:flex;overflow-x:auto;gap:2px;margin-bottom:24px;padding-bottom:4px;}
+  .month-tab{flex:0 0 auto;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;padding:8px 14px 10px;background:var(--paper-raised);border:1px solid var(--line);border-bottom:none;border-radius:4px 4px 0 0;color:var(--muted);cursor:pointer;position:relative;white-space:nowrap;}
+  .month-tab::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:var(--line);}
+  .month-tab.active{background:var(--paper);color:var(--ink);font-weight:600;border-color:var(--ink);}
+  .month-tab.active::after{background:var(--paper);}
+  .card{background:var(--paper-raised);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:16px;}
+  .card-title{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 14px;}
+  .summary-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:16px;}
+  .stat .num{font-family:'Fraunces',serif;font-size:28px;font-weight:600;}
+  .stat .num.spend{color:var(--alert);}
+  .stat .label{font-size:12px;color:var(--muted);margin-top:2px;}
+  .cat-line{display:flex;align-items:baseline;gap:8px;padding:7px 0;border-bottom:1px dotted var(--line);}
+  .cat-line:last-child{border-bottom:none;}
+  .cat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .cat-name{font-size:13px;flex-shrink:0;}
+  .cat-leader{flex:1;border-bottom:1px dotted var(--line);position:relative;top:-4px;}
+  .cat-amt{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500;white-space:nowrap;}
+  .cat-bar-bg{height:4px;background:var(--line);border-radius:2px;margin-top:4px;overflow:hidden;}
+  .cat-bar-fill{height:100%;border-radius:2px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;padding:0 10px 8px;border-bottom:1px solid var(--ink);}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  tr:hover td{background:var(--accent-soft);}
+  .amt-cell{font-family:'IBM Plex Mono',monospace;text-align:right;font-weight:500;}
+  .cat-pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;}
+  .card-pill{font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
+  .row-actions button{background:none;border:none;cursor:pointer;color:var(--muted);font-size:12px;padding:2px 6px;}
+  .row-actions button:hover{color:var(--alert);}
+  .form-grid{display:grid;grid-template-columns:1fr 2fr 1fr 1fr 1fr auto;gap:10px;align-items:end;}
+  label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.04em;}
+  input,select,textarea{width:100%;font-family:'Inter';font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);color:var(--ink);}
+  textarea{font-family:'IBM Plex Mono',monospace;font-size:12px;min-height:140px;resize:vertical;}
+  button.primary{background:var(--ink);color:var(--paper);border:none;padding:9px 18px;border-radius:var(--radius);font-family:'Inter';font-weight:600;font-size:13px;cursor:pointer;}
+  button.primary:hover{background:var(--accent);}
+  button.ghost{background:none;border:1px solid var(--line);padding:8px 14px;border-radius:var(--radius);font-size:12px;cursor:pointer;color:var(--ink-soft);font-family:'Inter';}
+  button.ghost:hover{border-color:var(--ink);color:var(--ink);}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;}
+  .hint code{background:var(--paper);padding:1px 5px;border-radius:2px;font-family:'IBM Plex Mono',monospace;font-size:11px;}
+  .chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;}
+  .chip{display:flex;align-items:center;gap:6px;font-size:12px;padding:5px 10px;border-radius:14px;background:var(--paper);border:1px solid var(--line);}
+  .chip button{background:none;border:none;cursor:pointer;color:var(--muted);font-size:12px;padding:0;line-height:1;}
+  .empty-state{text-align:center;padding:40px 20px;color:var(--muted);font-size:13px;}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:4px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .25s ease, transform .25s ease;z-index:50;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);}
+  .flex-between{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .small-muted{font-size:12px;color:var(--muted);}
+  .login-screen{max-width:360px;margin:120px auto;text-align:center;}
+  .login-screen h1{margin-bottom:6px;}
+  .login-screen p{color:var(--muted);font-size:13px;margin-bottom:20px;}
+  .login-screen input{margin-bottom:10px;}
+  #logoutBtn{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;}
+  ::selection{background:var(--accent-soft);}
+</style>
+</head>
+<body>
+
+<div id="loginScreen" class="login-screen" style="display:none">
+  <h1>Ledger<span class="accent-dot">.</span></h1>
+  <p>Inicia sesión con tu correo. Te llega un link mágico, sin contraseña.</p>
+  <input type="email" id="loginEmail" placeholder="tu@correo.com">
+  <button class="primary" id="loginBtn" style="width:100%">Enviar link de acceso</button>
+  <p class="small-muted" id="loginStatus" style="margin-top:12px"></p>
+</div>
+
+<div class="wrap" id="app" style="display:none">
+  <header>
+    <div>
+      <h1>Ledger<span class="accent-dot">.</span></h1>
+      <div class="subtitle" id="subtitleText">Control de gastos <button id="logoutBtn">cerrar sesión</button></div>
+    </div>
+    <div class="tabbar">
+      <button data-view="dashboard" class="active">Panel</button>
+      <button data-view="transactions">Movimientos</button>
+      <button data-view="import">Importar</button>
+      <button data-view="settings">Tarjetas y categorías</button>
+    </div>
+  </header>
+
+  <div class="month-strip" id="monthStrip"></div>
+
+  <div id="viewDashboard"></div>
+  <div id="viewTransactions" style="display:none"></div>
+  <div id="viewImport" style="display:none"></div>
+  <div id="viewSettings" style="display:none"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   CONFIGURA ESTO con los datos de tu proyecto Supabase:
+   Settings → API → Project URL / anon public key
+   ============================================================ */
+const SUPABASE_URL = 'https://xbctgokkysfwhbhchvvq.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhiY3Rnb2treXNmd2hiaGNodnZxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMzg3NjUsImV4cCI6MjA5MjgxNDc2NX0.Eb2u_cqu88L72BleYdyRFi0Pw7AJjw8GyJ1-3p9jG6I';
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  db: { schema: 'gastos' } // vive en su propio schema dentro del proyecto de LifeOfSam
+});
+
+const DEFAULT_CATEGORIES = [
+  {nombre:'Restaurantes', color:'#B0472A', keywords:['restaurant','cafe','starbucks','uber eats','rappi','food','sushi','taco']},
+  {nombre:'Super', color:'#2F6F5E', keywords:['walmart','soriana','chedraui','costco','super','heb']},
+  {nombre:'Transporte', color:'#5B6EE1', keywords:['uber','didi','gasolina','shell','pemex','estacionamiento']},
+  {nombre:'Suscripciones', color:'#8A5FBF', keywords:['netflix','spotify','apple.com','amazon prime','disney','icloud','openai','anthropic']},
+  {nombre:'Viajes', color:'#C9860A', keywords:['aeromexico','volaris','hotel','airbnb','booking']},
+  {nombre:'Salud', color:'#3C9AA6', keywords:['farmacia','doctor','hospital','gym','smart fit']},
+  {nombre:'Compras', color:'#A34E8C', keywords:['amazon','liverpool','mercado libre','shein']},
+  {nombre:'Otro', color:'#767A72', keywords:[]},
+];
+const DEFAULT_CARDS = ['Amex'];
+
+let state = {
+  user: null,
+  transactions: [],   // gastos, joined with tarjeta/categoria names
+  cards: [],           // {id, nombre}
+  categories: [],       // {id, nombre, color, keywords}
+  currentMonth: null,
+  currentView: 'dashboard',
+};
+
+/* ---------- Auth ---------- */
+async function initAuth(){
+  const { data: { session } } = await sb.auth.getSession();
+  if(session){ await onLogin(session.user); }
+  else { document.getElementById('loginScreen').style.display = ''; }
+
+  sb.auth.onAuthStateChange((event, session) => {
+    if(event === 'SIGNED_IN' && session){ onLogin(session.user); }
+    if(event === 'SIGNED_OUT'){ location.reload(); }
+  });
+}
+document.getElementById('loginBtn').addEventListener('click', async ()=>{
+  const email = document.getElementById('loginEmail').value.trim();
+  if(!email){ return; }
+  document.getElementById('loginStatus').textContent = 'Enviando...';
+  const { error } = await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: window.location.origin } });
+  document.getElementById('loginStatus').textContent = error ? 'Error: '+error.message : 'Revisa tu correo y da clic en el link.';
+});
+document.getElementById('logoutBtn').addEventListener('click', async ()=>{ await sb.auth.signOut(); });
+
+async function onLogin(user){
+  state.user = user;
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  await ensureDefaults();
+  await loadAll();
+  renderAll();
+}
+
+/* ---------- Seed defaults on first login ---------- */
+async function ensureDefaults(){
+  const { data: cards } = await sb.from('tarjetas').select('id').limit(1);
+  if(!cards || cards.length === 0){
+    await sb.from('tarjetas').insert(DEFAULT_CARDS.map(nombre=>({nombre})));
+  }
+  const { data: cats } = await sb.from('categorias').select('id').limit(1);
+  if(!cats || cats.length === 0){
+    await sb.from('categorias').insert(DEFAULT_CATEGORIES);
+  }
+}
+
+/* ---------- Data loading ---------- */
+async function loadAll(){
+  const [{data:cards}, {data:cats}, {data:tx}] = await Promise.all([
+    sb.from('tarjetas').select('*').order('nombre'),
+    sb.from('categorias').select('*').order('nombre'),
+    sb.from('movimientos').select('*').order('fecha', {ascending:false}),
+  ]);
+  state.cards = cards || [];
+  state.categories = cats || [];
+  state.transactions = (tx || []).map(t => ({
+    ...t,
+    cardName: (state.cards.find(c=>c.id===t.tarjeta_id)||{}).nombre || '—',
+    catName: (state.categories.find(c=>c.id===t.categoria_id)||{}).nombre || 'Otro',
+  }));
+}
+
+/* ---------- Utils ---------- */
+function fmtMoney(n){
+  const neg = n < 0;
+  const v = Math.abs(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return (neg? '-':'') + '$' + v;
+}
+function monthKey(dateStr){ return dateStr.slice(0,7); }
+function monthLabel(key){
+  const [y,m] = key.split('-');
+  const names = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return names[parseInt(m,10)-1] + ' ' + y;
+}
+function guessCategoryId(desc){
+  const d = desc.toLowerCase();
+  for(const cat of state.categories){
+    for(const kw of (cat.keywords||[])){
+      if(kw && d.includes(kw.toLowerCase())) return cat.id;
+    }
+  }
+  const otro = state.categories.find(c=>c.nombre==='Otro');
+  return otro ? otro.id : (state.categories[0] && state.categories[0].id);
+}
+function catColor(name){
+  const c = state.categories.find(c=>c.nombre===name);
+  return c ? c.color : '#767A72';
+}
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._timer); t._timer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+function allMonths(){
+  const set = new Set(state.transactions.map(t=>monthKey(t.fecha)));
+  const arr = [...set].sort().reverse();
+  return arr.length ? arr : [new Date().toISOString().slice(0,7)];
+}
+
+/* ---------- Month strip ---------- */
+function renderMonthStrip(){
+  const months = allMonths();
+  if(!state.currentMonth || !months.includes(state.currentMonth)) state.currentMonth = months[0];
+  const strip = document.getElementById('monthStrip');
+  strip.innerHTML = months.map(m => `<div class="month-tab ${m===state.currentMonth?'active':''}" data-month="${m}">${monthLabel(m)}</div>`).join('');
+  strip.querySelectorAll('.month-tab').forEach(el=>{
+    el.addEventListener('click', ()=>{ state.currentMonth = el.dataset.month; renderAll(); });
+  });
+}
+
+/* ---------- Dashboard ---------- */
+function renderDashboard(){
+  const el = document.getElementById('viewDashboard');
+  const monthTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth);
+  const total = monthTx.reduce((s,t)=>s+Number(t.monto),0);
+  const byCard = {}, byCat = {};
+  monthTx.forEach(t=>{
+    byCard[t.cardName] = (byCard[t.cardName]||0) + Number(t.monto);
+    byCat[t.catName] = (byCat[t.catName]||0) + Number(t.monto);
+  });
+  const topCard = Object.entries(byCard).sort((a,b)=>b[1]-a[1])[0];
+  const catEntries = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  const maxCat = catEntries.length ? catEntries[0][1] : 1;
+
+  if(monthTx.length===0){
+    el.innerHTML = `<div class="card"><div class="empty-state">Sin movimientos en ${monthLabel(state.currentMonth)} todavía.<br>Ve a <strong>Importar</strong> o agrega uno manual en <strong>Movimientos</strong>.</div></div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="summary-row">
+      <div class="card stat"><div class="num spend">${fmtMoney(total)}</div><div class="label">Gasto total · ${monthLabel(state.currentMonth)}</div></div>
+      <div class="card stat"><div class="num">${monthTx.length}</div><div class="label">Movimientos</div></div>
+      <div class="card stat"><div class="num" style="font-size:20px">${topCard?topCard[0]:'—'}</div><div class="label">Tarjeta con más gasto ${topCard?'('+fmtMoney(topCard[1])+')':''}</div></div>
+    </div>
+    <div class="card">
+      <p class="card-title">Gasto por categoría</p>
+      ${catEntries.map(([name,amt])=>`<div class="cat-line"><span class="cat-dot" style="background:${catColor(name)}"></span><span class="cat-name">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
+      <div style="margin-top:10px">${catEntries.map(([name,amt])=>`<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`).join('')}</div>
+    </div>
+    <div class="card">
+      <p class="card-title">Gasto por tarjeta</p>
+      ${Object.entries(byCard).sort((a,b)=>b[1]-a[1]).map(([name,amt])=>`<div class="cat-line"><span class="card-pill" style="min-width:90px">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
+    </div>`;
+}
+
+/* ---------- Transactions view ---------- */
+function renderTransactions(){
+  const el = document.getElementById('viewTransactions');
+  const monthTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth).sort((a,b)=> b.fecha.localeCompare(a.fecha));
+  el.innerHTML = `
+    <div class="card">
+      <p class="card-title">Agregar movimiento manual</p>
+      <div class="form-grid">
+        <div><label>Fecha</label><input type="date" id="txDate" value="${state.currentMonth}-01"></div>
+        <div><label>Descripción</label><input type="text" id="txDesc" placeholder="Ej. Amazon MX"></div>
+        <div><label>Monto</label><input type="number" step="0.01" id="txAmt" placeholder="0.00"></div>
+        <div><label>Tarjeta</label><select id="txCard">${state.cards.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}</select></div>
+        <div><label>Categoría</label><select id="txCat">${state.categories.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}</select></div>
+        <div><button class="primary" id="addTxBtn">Agregar</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="flex-between"><p class="card-title" style="margin:0">Movimientos · ${monthLabel(state.currentMonth)}</p><span class="small-muted">${monthTx.length} registros</span></div>
+      ${monthTx.length===0 ? `<div class="empty-state">Sin movimientos este mes.</div>` : `
+      <table>
+        <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead>
+        <tbody>
+          ${monthTx.map(t=>`
+            <tr>
+              <td>${t.fecha}</td><td>${t.descripcion}</td>
+              <td><span class="card-pill">${t.cardName}</span></td>
+              <td><span class="cat-pill" style="background:${catColor(t.catName)}22;color:${catColor(t.catName)}">${t.catName}</span></td>
+              <td class="amt-cell">${fmtMoney(Number(t.monto))}</td>
+              <td class="row-actions"><button data-del="${t.id}" title="Eliminar">✕</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+
+  document.getElementById('addTxBtn').addEventListener('click', async ()=>{
+    const date = document.getElementById('txDate').value;
+    const desc = document.getElementById('txDesc').value.trim();
+    const amt = parseFloat(document.getElementById('txAmt').value);
+    const card = document.getElementById('txCard').value;
+    const cat = document.getElementById('txCat').value;
+    if(!date || !desc || isNaN(amt)){ showToast('Completa fecha, descripción y monto'); return; }
+    const { error } = await sb.from('movimientos').insert({ fecha:date, descripcion:desc, monto:amt, tarjeta_id:card, categoria_id:cat });
+    if(error){ showToast('Error: '+error.message); return; }
+    showToast('Movimiento agregado');
+    await loadAll(); renderAll();
+  });
+  el.querySelectorAll('[data-del]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const { error } = await sb.from('movimientos').delete().eq('id', btn.dataset.del);
+      if(error){ showToast('Error: '+error.message); return; }
+      showToast('Eliminado'); await loadAll(); renderAll();
+    });
+  });
+}
+
+/* ---------- Import view ---------- */
+function renderImport(){
+  const el = document.getElementById('viewImport');
+  el.innerHTML = `
+    <div class="card">
+      <p class="card-title">Importar movimientos (CSV)</p>
+      <p class="hint">Pega líneas <code>fecha,descripción,monto,tarjeta</code> — una por línea, fecha en <code>YYYY-MM-DD</code>. Categoría se asigna sola por palabra clave. Ejemplo:<br>
+      <code>2026-06-14,UBER EATS CDMX,245.50,Amex</code></p>
+      <textarea id="csvInput" placeholder="2026-06-14,UBER EATS CDMX,245.50,Amex"></textarea>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+        <button class="primary" id="parseBtn">Importar líneas</button>
+        <span class="small-muted" id="importStatus"></span>
+      </div>
+    </div>`;
+  document.getElementById('parseBtn').addEventListener('click', async ()=>{
+    const raw = document.getElementById('csvInput').value.trim();
+    if(!raw){ showToast('Pega al menos una línea'); return; }
+    const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+    let added = 0, skipped = 0;
+    const rows = [];
+    for(const line of lines){
+      const parts = line.split(',').map(p=>p.trim());
+      if(parts.length < 3){ skipped++; continue; }
+      const [date, desc, amtStr, cardName] = parts;
+      const amount = parseFloat(amtStr);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || !desc || isNaN(amount)){ skipped++; continue; }
+      let card = state.cards.find(c=>c.nombre === (cardName || state.cards[0]?.nombre));
+      if(cardName && !card){
+        const { data } = await sb.from('tarjetas').insert({ nombre: cardName }).select().single();
+        card = data; state.cards.push(card);
+      }
+      rows.push({ fecha:date, descripcion:desc, monto:amount, tarjeta_id: card ? card.id : null, categoria_id: guessCategoryId(desc) });
+      added++;
+    }
+    if(rows.length){
+      const { error } = await sb.from('movimientos').insert(rows);
+      if(error){ showToast('Error: '+error.message); return; }
+    }
+    document.getElementById('importStatus').textContent = `${added} importados, ${skipped} omitidos`;
+    document.getElementById('csvInput').value = '';
+    showToast(`${added} movimientos importados`);
+    await loadAll(); renderMonthStrip();
+  });
+}
+
+/* ---------- Settings view ---------- */
+function renderSettings(){
+  const el = document.getElementById('viewSettings');
+  el.innerHTML = `
+    <div class="card">
+      <p class="card-title">Tarjetas</p>
+      <div class="chip-row">${state.cards.map(c=>`<span class="chip">${c.nombre} <button data-rmcard="${c.id}">✕</button></span>`).join('')}</div>
+      <div style="display:flex;gap:8px"><input type="text" id="newCard" placeholder="Nombre de tarjeta, ej. BBVA Oro" style="max-width:240px"><button class="ghost" id="addCardBtn">Agregar tarjeta</button></div>
+    </div>
+    <div class="card">
+      <p class="card-title">Categorías</p>
+      <div class="chip-row">${state.categories.map(c=>`<span class="chip"><span class="cat-dot" style="background:${c.color}"></span>${c.nombre} <button data-rmcat="${c.id}">✕</button></span>`).join('')}</div>
+      <div style="display:flex;gap:8px"><input type="text" id="newCat" placeholder="Nueva categoría" style="max-width:240px"><button class="ghost" id="addCatBtn">Agregar categoría</button></div>
+      <p class="hint">Para ajustar palabras clave de auto-categorización, pídemelo en el chat y te actualizo el código.</p>
+    </div>`;
+  document.getElementById('addCardBtn').addEventListener('click', async ()=>{
+    const v = document.getElementById('newCard').value.trim();
+    if(!v) return;
+    const { error } = await sb.from('tarjetas').insert({ nombre: v });
+    if(error){ showToast('Error: '+error.message); return; }
+    showToast('Tarjeta agregada'); await loadAll(); renderAll();
+  });
+  document.getElementById('addCatBtn').addEventListener('click', async ()=>{
+    const v = document.getElementById('newCat').value.trim();
+    if(!v) return;
+    const palette = ['#2F6F5E','#B0472A','#5B6EE1','#8A5FBF','#C9860A','#3C9AA6','#A34E8C'];
+    const { error } = await sb.from('categorias').insert({ nombre: v, color: palette[state.categories.length % palette.length], keywords: [] });
+    if(error){ showToast('Error: '+error.message); return; }
+    showToast('Categoría agregada'); await loadAll(); renderAll();
+  });
+  el.querySelectorAll('[data-rmcard]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      await sb.from('tarjetas').delete().eq('id', btn.dataset.rmcard);
+      await loadAll(); renderAll();
+    });
+  });
+  el.querySelectorAll('[data-rmcat]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      await sb.from('categorias').delete().eq('id', btn.dataset.rmcat);
+      await loadAll(); renderAll();
+    });
+  });
+}
+
+/* ---------- View switching ---------- */
+function renderAll(){
+  renderMonthStrip();
+  document.getElementById('viewDashboard').style.display = state.currentView==='dashboard' ? '' : 'none';
+  document.getElementById('viewTransactions').style.display = state.currentView==='transactions' ? '' : 'none';
+  document.getElementById('viewImport').style.display = state.currentView==='import' ? '' : 'none';
+  document.getElementById('viewSettings').style.display = state.currentView==='settings' ? '' : 'none';
+  if(state.currentView==='dashboard') renderDashboard();
+  if(state.currentView==='transactions') renderTransactions();
+  if(state.currentView==='import') renderImport();
+  if(state.currentView==='settings') renderSettings();
+  document.querySelectorAll('.tabbar button').forEach(b=> b.classList.toggle('active', b.dataset.view===state.currentView));
+}
+document.querySelectorAll('.tabbar button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{ state.currentView = btn.dataset.view; renderAll(); });
+});
+
+initAuth();
+</script>
+</body>
+</html>
