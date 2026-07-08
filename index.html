@@ -1018,10 +1018,19 @@ function renderTransactions(){
   });
   el.querySelectorAll('[data-cardedit]').forEach(sel=>{
     sel.addEventListener('change', async ()=>{
-      const { error } = await sb.from('movimientos').update({ tarjeta_id: sel.value }).eq('id', sel.dataset.cardedit);
-      if(error){ showToast('Error: '+error.message); return; }
-      showToast('Tarjeta actualizada');
-      await loadAll(); renderAll();
+      console.log('[cardedit] change disparado. movimiento:', sel.dataset.cardedit, 'nueva tarjeta:', sel.value);
+      try{
+        const { data, error } = await sb.from('movimientos').update({ tarjeta_id: sel.value }).eq('id', sel.dataset.cardedit).select();
+        console.log('[cardedit] respuesta de Supabase:', { data, error });
+        if(error){ showToast('Error: '+error.message); return; }
+        if(!data || data.length === 0){ showToast('No se encontró el movimiento a actualizar (revisa RLS/id)'); console.warn('[cardedit] update no afectó ninguna fila'); return; }
+        showToast('Tarjeta actualizada');
+        await loadAll();
+        renderAll();
+      }catch(err){
+        console.error('[cardedit] excepción no controlada:', err);
+        showToast('Error inesperado: ' + err.message);
+      }
     });
   });
   el.querySelectorAll('[data-del]').forEach(btn=>{
