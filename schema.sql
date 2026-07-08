@@ -35,6 +35,8 @@ create table gastos.movimientos (
   monto numeric(12,2) not null,
   tarjeta_id uuid references gastos.tarjetas(id) on delete set null,
   categoria_id uuid references gastos.categorias(id) on delete set null,
+  cuota_actual int,  -- ej. 9  → null = pago neto (no es MSI)
+  cuota_total int,   -- ej. 12 → null = pago neto (no es MSI)
   created_at timestamptz not null default now()
 );
 

@@ -51,6 +51,8 @@
   .amt-cell{font-family:'IBM Plex Mono',monospace;text-align:right;font-weight:500;}
   .cat-pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;}
   .card-pill{font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
+  .msi-pill{display:inline-block;font-size:10px;font-family:'IBM Plex Mono',monospace;padding:1px 6px;border-radius:8px;background:var(--accent-soft);color:var(--ink);border:1px solid var(--line);margin-left:6px;white-space:nowrap;}
+  .msi-pill.done{opacity:.55;}
   .row-actions button{background:none;border:none;cursor:pointer;color:var(--muted);font-size:12px;padding:2px 6px;}
   .row-actions button:hover{color:var(--alert);}
   .form-grid{display:grid;grid-template-columns:1fr 2fr 1fr 1fr 1fr auto;gap:10px;align-items:end;}
@@ -695,6 +697,7 @@ async function confirmPreviewImport(){
   const inserts = rows.map(r => ({
     fecha: r.fecha, descripcion: r.descripcion, monto: r.monto,
     tarjeta_id: idMap[r.card] || r.card, categoria_id: r.category || null,
+    cuota_actual: r.cuotaActual || null, cuota_total: r.cuotaTotal || null,
   }));
   const { error } = await sb.from('movimientos').insert(inserts);
   if(error){ showToast('Error: '+error.message); return; }
@@ -747,6 +750,8 @@ function renderDashboard(){
     el.innerHTML = `<div class="card"><div class="empty-state">Sin movimientos en ${monthLabel(state.currentMonth)} todavía.<br>Ve a <strong>Importar</strong> o agrega uno manual en <strong>Movimientos</strong>.</div></div>`;
     return;
   }
+  const installmentsHtml = renderInstallmentsCard();
+
   el.innerHTML = `
     ${uncatBanner}
     <div class="summary-row">
@@ -763,6 +768,38 @@ function renderDashboard(){
     <div class="card">
       <p class="card-title">Gasto por tarjeta</p>
       ${Object.entries(byCard).sort((a,b)=>b[1]-a[1]).map(([name,amt])=>`<div class="cat-line"><span class="card-pill" style="min-width:90px">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
+    </div>
+    ${installmentsHtml}`;
+}
+// Agrupa todos los movimientos con cuota_total (compras a meses / MSI) por
+// descripción normalizada + tarjeta, y arma una tarjeta de avance por plan.
+function renderInstallmentsCard(){
+  const msiTx = state.transactions.filter(t=>t.cuota_total);
+  if(msiTx.length === 0) return '';
+  const groups = {};
+  msiTx.forEach(t=>{
+    const key = merchantKey(t.descripcion) + '|' + t.tarjeta_id;
+    if(!groups[key]) groups[key] = { descripcion: t.descripcion, cardName: t.cardName, monto: Number(t.monto), cuotaTotal: t.cuota_total, cuotaMax: 0 };
+    groups[key].cuotaMax = Math.max(groups[key].cuotaMax, t.cuota_actual || 0);
+    groups[key].cuotaTotal = Math.max(groups[key].cuotaTotal, t.cuota_total);
+    groups[key].monto = Number(t.monto); // se queda con el monto de la cuota más reciente vista
+  });
+  const plans = Object.values(groups).sort((a,b)=> (b.cuotaTotal-b.cuotaMax) - (a.cuotaTotal-a.cuotaMax));
+  return `
+    <div class="card">
+      <p class="card-title">Compras a meses (MSI)</p>
+      ${plans.map(p=>{
+        const faltan = p.cuotaTotal - p.cuotaMax;
+        const pct = Math.min(100, (p.cuotaMax / p.cuotaTotal * 100));
+        return `<div style="margin-bottom:12px">
+          <div class="cat-line" style="border-bottom:none;padding:2px 0">
+            <span class="cat-name" style="flex:1">${p.descripcion} <span class="card-pill">${p.cardName}</span></span>
+            <span class="cat-amt">${faltan<=0 ? 'Liquidado' : `faltan ${faltan} cuota${faltan===1?'':'s'} · ${fmtMoney(p.monto*faltan)}`}</span>
+          </div>
+          <div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${pct.toFixed(1)}%;background:${faltan<=0?'var(--muted)':'var(--accent)'}"></div></div>
+          <div class="small-muted" style="margin-top:2px">Cuota ${p.cuotaMax} de ${p.cuotaTotal} · ${fmtMoney(p.monto)}/mes</div>
+        </div>`;
+      }).join('')}
     </div>`;
 }
 
@@ -779,8 +816,11 @@ function renderTransactions(){
         <div><label>Monto</label><input type="number" step="0.01" id="txAmt" placeholder="0.00"></div>
         <div><label>Tarjeta</label><select id="txCard">${state.cards.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}</select></div>
         <div><label>Categoría</label><select id="txCat">${state.categories.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}</select></div>
+        <div><label>Cuota actual</label><input type="number" min="1" id="txCuotaActual" placeholder="ej. 9"></div>
+        <div><label>Cuota total (MSI)</label><input type="number" min="1" id="txCuotaTotal" placeholder="ej. 12"></div>
         <div><button class="primary" id="addTxBtn">Agregar</button></div>
       </div>
+      <p class="small-muted" style="margin:8px 0 0">Deja "Cuota actual/total" vacío para un pago normal (neto). Llénalos si es una compra a meses (MSI) — así se ve el avance de cuotas.</p>
     </div>
     <div class="card">
       <div class="flex-between"><p class="card-title" style="margin:0">Movimientos · ${monthLabel(state.currentMonth)}</p><span class="small-muted">${monthTx.length} registros</span></div>
@@ -790,7 +830,8 @@ function renderTransactions(){
         <tbody>
           ${monthTx.map(t=>`
             <tr>
-              <td>${t.fecha}</td><td>${t.descripcion}</td>
+              <td>${t.fecha}</td>
+              <td>${t.descripcion}${t.cuota_total ? `<span class="msi-pill ${t.cuota_actual>=t.cuota_total?'done':''}" title="${t.cuota_actual>=t.cuota_total?'Última cuota':`Faltan ${t.cuota_total - t.cuota_actual} cuota(s)`}">MSI ${t.cuota_actual}/${t.cuota_total}</span>` : ''}</td>
               <td>
                 <select data-cardedit="${t.id}">
                   ${state.cards.map(c=>`<option value="${c.id}" ${c.id===t.tarjeta_id?'selected':''}>${c.nombre}</option>`).join('')}
@@ -815,8 +856,16 @@ function renderTransactions(){
     const amt = parseFloat(document.getElementById('txAmt').value);
     const card = document.getElementById('txCard').value;
     const cat = document.getElementById('txCat').value;
+    const cuotaActualRaw = document.getElementById('txCuotaActual').value;
+    const cuotaTotalRaw = document.getElementById('txCuotaTotal').value;
+    const cuotaActual = cuotaActualRaw ? parseInt(cuotaActualRaw, 10) : null;
+    const cuotaTotal = cuotaTotalRaw ? parseInt(cuotaTotalRaw, 10) : null;
     if(!date || !desc || isNaN(amt)){ showToast('Completa fecha, descripción y monto'); return; }
-    const { error } = await sb.from('movimientos').insert({ fecha:date, descripcion:desc, monto:amt, tarjeta_id:card, categoria_id:cat });
+    if((cuotaActual && !cuotaTotal) || (!cuotaActual && cuotaTotal)){ showToast('Para MSI llena cuota actual Y cuota total'); return; }
+    const { error } = await sb.from('movimientos').insert({
+      fecha:date, descripcion:desc, monto:amt, tarjeta_id:card, categoria_id:cat,
+      cuota_actual: cuotaActual, cuota_total: cuotaTotal,
+    });
     if(error){ showToast('Error: '+error.message); return; }
     showToast('Movimiento agregado');
     await loadAll(); renderAll();
@@ -862,7 +911,7 @@ function renderImport(){
       </div>
       <p class="hint">El parser de PDF es beta — revisa montos y fechas antes de confirmar. Desmarca lo que no quieras importar.</p>
       <table class="preview-table">
-        <thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th></tr></thead>
+        <thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th></tr></thead>
         <tbody>
           ${state.previewRows.map(r=>`
             <tr class="${r.include?'':'excl'}" data-pid="${r.id}">
@@ -872,6 +921,11 @@ function renderImport(){
               <td><input type="number" step="0.01" data-pfield="monto" data-pid2="${r.id}" value="${r.monto}" style="width:90px"></td>
               <td><select data-pfield="card" data-pid2="${r.id}">${[...state.cards, ...state.pendingNewCards].map(c=>`<option value="${c.id}" ${c.id===r.card?'selected':''}>${c.nombre}${state.pendingNewCards.find(p=>p.id===c.id)?' (nueva)':''}</option>`).join('')}</select></td>
               <td><select data-pfield="category" data-pid2="${r.id}"><option value="" ${!r.category?'selected':''}>— Sin categoría —</option>${state.categories.map(c=>`<option value="${c.id}" ${c.id===r.category?'selected':''}>${c.nombre}</option>`).join('')}</select></td>
+              <td style="white-space:nowrap">
+                <input type="number" min="1" data-pfield="cuotaActual" data-pid2="${r.id}" value="${r.cuotaActual||''}" placeholder="ej.9" style="width:52px;display:inline-block">
+                /
+                <input type="number" min="1" data-pfield="cuotaTotal" data-pid2="${r.id}" value="${r.cuotaTotal||''}" placeholder="ej.12" style="width:52px;display:inline-block">
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -902,8 +956,9 @@ function renderImport(){
     ${debugSection}
     <div class="card">
       <p class="card-title">Importar movimientos (CSV manual)</p>
-      <p class="hint">Alternativa si tu banco aún no tiene parser de PDF. Pega líneas <code>fecha,descripción,monto,tarjeta</code> — una por línea, fecha en <code>YYYY-MM-DD</code>. Categoría se asigna sola por palabra clave. Ejemplo:<br>
-      <code>2026-06-14,UBER EATS CDMX,245.50,Amex</code></p>
+      <p class="hint">Alternativa si tu banco aún no tiene parser de PDF. Pega líneas <code>fecha,descripción,monto,tarjeta</code> — una por línea, fecha en <code>YYYY-MM-DD</code>. Categoría se asigna sola por palabra clave. Para compras a meses (MSI), agrega dos columnas opcionales: <code>cuota_actual,cuota_total</code>. Ejemplo:<br>
+      <code>2026-06-14,UBER EATS CDMX,245.50,Amex</code><br>
+      <code>2026-06-14,ALETA AZUL POLANCO,1006.42,Santander Platinum,9,12</code></p>
       <textarea id="csvInput" placeholder="2026-06-14,UBER EATS CDMX,245.50,Amex"></textarea>
       <div style="margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-soft);text-transform:none;letter-spacing:0;font-family:'Inter'">
@@ -941,7 +996,9 @@ function renderImport(){
       inp.addEventListener('change', ()=>{
         const row = state.previewRows.find(r=>r.id===inp.dataset.pid2);
         const field = inp.dataset.pfield;
-        row[field] = field === 'monto' ? parseFloat(inp.value) : inp.value;
+        if(field === 'monto') row[field] = parseFloat(inp.value);
+        else if(field === 'cuotaActual' || field === 'cuotaTotal') row[field] = inp.value ? parseInt(inp.value,10) : null;
+        else row[field] = inp.value;
       });
     });
     document.getElementById('confirmPreviewBtn').addEventListener('click', confirmPreviewImport);
@@ -963,9 +1020,11 @@ function renderImport(){
     for(const line of lines){
       const parts = line.split(',').map(p=>p.trim());
       if(parts.length < 3){ skipped++; continue; }
-      const [date, desc, amtStr, cardName] = parts;
+      const [date, desc, amtStr, cardName, cuotaActualStr, cuotaTotalStr] = parts;
       const amount = parseFloat(amtStr);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || !desc || isNaN(amount)){ skipped++; continue; }
+      const cuotaActual = cuotaActualStr ? parseInt(cuotaActualStr,10) : null;
+      const cuotaTotal = cuotaTotalStr ? parseInt(cuotaTotalStr,10) : null;
       let card = state.cards.find(c=>c.nombre === (cardName || state.cards[0]?.nombre));
       if(cardName && !card){
         const { data } = await sb.from('tarjetas').insert({ nombre: cardName }).select().single();
@@ -979,6 +1038,7 @@ function renderImport(){
         fecha: date, descripcion: desc, monto: amount,
         card: card ? card.id : (state.cards[0] ? state.cards[0].id : null),
         category: noCategory ? null : guessCategoryId(desc),
+        cuotaActual, cuotaTotal,
       });
     }
     if(rows.length === 0){
