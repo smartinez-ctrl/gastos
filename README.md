@@ -60,13 +60,38 @@ Abre la URL de Vercel, mete tu correo, te llega un link mágico (mismo sistema d
 que ya usa LifeOfSam — si ya tienes cuenta ahí con ese correo, es la misma). Al entrar
 la app crea tus tarjetas y categorías por defecto automáticamente.
 
-## 6. Importar tus estados de cuenta
+## 6. Importar PDFs directo en la app (con IA)
 
-Sube tus PDFs de Amex y las demás tarjetas a Claude — te extraigo los movimientos y te
-regreso las líneas listas en formato:
+Ya no hace falta pegar los PDFs en el chat. En la pestaña **Importar**, arrastra o sube
+el PDF del estado de cuenta:
+
+- Si es un banco con parser rápido (Amex, Santander tarjeta de crédito) se lee
+  al instante con regex, sin costo de API.
+- Cualquier otro caso — incluyendo PDFs **escaneados sin capa de texto** (típico de
+  Santander cuenta de débito) o un banco nuevo — cae automático a un endpoint
+  serverless (`/api/parse-pdf`) que manda el PDF a la API de Claude y regresa los
+  movimientos ya estructurados.
+
+**Para que esto funcione hace falta configurar una API key de Anthropic en Vercel:**
+
+1. Genera una key en https://console.anthropic.com/settings/keys
+2. Vercel → tu proyecto `gastos` → **Settings → Environment Variables**
+3. Agrega `ANTHROPIC_API_KEY` = tu key, disponible para **Production** (y Preview si
+   quieres probarlo en ramas). Nunca se expone al navegador — solo la usa la función
+   serverless.
+4. Redeploy (o el próximo push lo dispara solo).
+
+Esto tiene costo de API por PDF procesado (paga tu cuenta de Anthropic, no está
+incluido en el plan de Vercel). Como siempre, revisa la tabla antes de confirmar —
+el modelo puede leer mal un renglón, sobre todo en PDFs escaneados de mala calidad.
+
+## 7. Importar por CSV manual (alternativa)
+
+Si prefieres, también puedes pegar líneas directo en formato:
 
 ```
 2026-06-14,UBER EATS CDMX,245.50,Amex
 ```
 
-Las pegas en la pestaña **Importar** de la app y quedan cargadas con categoría automática.
+En la pestaña **Importar**, sección "Importar movimientos (CSV manual)". Columnas 5 y 6
+opcionales para compras a meses: `...,tarjeta,cuota_actual,cuota_total`.

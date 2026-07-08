@@ -242,6 +242,14 @@ async function loadAll(){
 
 /* ---------- Utils ---------- */
 function uid(){ return Math.random().toString(36).slice(2,10); }
+function fileToBase64(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.readAsDataURL(file);
+  });
+}
 function fmtMoney(n){
   const neg = n < 0;
   const v = Math.abs(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -631,19 +639,14 @@ async function handlePdfUpload(file){
     const text = await extractPdfText(file);
     const bankParser = BANK_PARSERS.find(b => b.detect(text));
     if(!bankParser){
-      state.previewStatus = '';
-      state.previewRows = [];
-      showToast('Banco no reconocido todavía — súbeme este PDF al chat y le enseño el formato');
-      renderImport();
+      await handleAiPdfExtract(file);
       return;
     }
     state.previewBank = bankParser.name;
     const parsed = bankParser.parse(text);
     if(parsed.length === 0){
-      state.previewStatus = '';
       state.previewDebugText = text;
-      showToast('No encontré movimientos — revisa el texto extraído abajo');
-      renderImport();
+      await handleAiPdfExtract(file);
       return;
     }
 
@@ -693,6 +696,65 @@ async function handlePdfUpload(file){
   }catch(err){
     state.previewStatus = '';
     showToast('Error leyendo el PDF: ' + err.message);
+    renderImport();
+  }
+}
+
+// Fallback para PDFs sin capa de texto (ej. Santander débito escaneado) o de
+// bancos aún no soportados por el parser regex: se manda el PDF completo a
+// un endpoint serverless (/api/parse-pdf) que a su vez llama a la API de
+// Claude para leerlo y devolver los movimientos en JSON. Así ya no hace
+// falta pegar el PDF en el chat — el propio sistema lo procesa.
+async function handleAiPdfExtract(file){
+  state.previewDebugText = state.previewDebugText || null; // conserva el debug si ya se seteó antes de llamar
+  state.previewStatus = 'Banco no reconocido por el parser rápido — leyendo con IA (puede tardar 15-30s)...';
+  renderImport();
+  try{
+    const pdfBase64 = await fileToBase64(file);
+    const resp = await fetch('/api/parse-pdf', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pdfBase64 }),
+    });
+    const data = await resp.json();
+    if(!resp.ok){ throw new Error(data.error || `Error del servidor (${resp.status})`); }
+
+    const parsed = (data.rows || []).filter(r => r && r.fecha && r.descripcion && typeof r.monto === 'number' && !isNaN(r.monto));
+    if(parsed.length === 0){
+      state.previewStatus = '';
+      showToast('La IA no encontró movimientos en este PDF — revisa que sea legible, o súbelo al chat');
+      renderImport();
+      return;
+    }
+
+    state.previewBank = 'IA (Claude) — revisa cada renglón con cuidado';
+    state.previewDebugText = null;
+    const defaultCardId = state.cards[0] ? state.cards[0].id : null;
+    const defaultCardName = state.cards[0] ? state.cards[0].nombre : '';
+    state.pendingNewCards = [];
+    const existingKeys = new Set(state.transactions.map(t =>
+      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.cardName||'').toLowerCase()}|${(t.descripcion||'').toLowerCase().trim()}`
+    ));
+    state.previewRows = parsed.map(p => {
+      const key = `${p.fecha}|${Math.round(Number(p.monto)*100)}|${defaultCardName.toLowerCase()}|${String(p.descripcion).toLowerCase().trim()}`;
+      const isDup = existingKeys.has(key);
+      existingKeys.add(key);
+      return {
+        id: uid(), include: !isDup, isDup,
+        fecha: p.fecha, descripcion: String(p.descripcion), monto: Number(p.monto),
+        card: defaultCardId,
+        category: guessCategoryId(String(p.descripcion)),
+        cuotaActual: p.cuota_actual || null, cuotaTotal: p.cuota_total || null,
+      };
+    });
+    const dupCount = state.previewRows.filter(r=>r.isDup).length;
+    showToast(`IA leyó ${parsed.length} movimiento(s) — revisa tarjeta y montos${dupCount?`, ${dupCount} posible(s) duplicado(s)`:''}`);
+    state.previewStatus = '';
+    renderImport();
+  }catch(err){
+    state.previewStatus = '';
+    state.previewRows = [];
+    showToast('Error con IA: ' + err.message);
     renderImport();
   }
 }
@@ -970,7 +1032,7 @@ function renderImport(){
       <label class="dropzone" id="dropzone" for="pdfFileInput">
         ${state.previewStatus ? `<span class="dz-label"><span class="spinner"></span>${state.previewStatus}</span>` : `
         <span class="dz-label">Arrastra el PDF aquí o haz clic para elegir el archivo</span>
-        <div class="dz-sub">Bancos soportados hoy: ${BANK_PARSERS.map(b=>b.name).join(', ')}. Otro banco: súbelo al chat primero.</div>`}
+        <div class="dz-sub">Parser rápido: ${BANK_PARSERS.map(b=>b.name).join(', ')}. Cualquier otro PDF (incluye escaneados sin texto, como Santander débito) se lee automático con IA — ya no hace falta subirlo al chat.</div>`}
         <input type="file" id="pdfFileInput" accept="application/pdf">
       </label>
     </div>
