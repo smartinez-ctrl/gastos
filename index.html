@@ -229,7 +229,7 @@ async function loadAll(){
   state.transactions = (tx || []).map(t => ({
     ...t,
     cardName: (state.cards.find(c=>c.id===t.tarjeta_id)||{}).nombre || '—',
-    catName: (state.categories.find(c=>c.id===t.categoria_id)||{}).nombre || 'Otro',
+    catName: t.categoria_id ? ((state.categories.find(c=>c.id===t.categoria_id)||{}).nombre || 'Otro') : null,
   }));
 }
 
@@ -503,9 +503,70 @@ function parseSantanderCreditText(rawText){
   return results;
 }
 
+function parseSantanderChecking(rawText){
+  const MESES_ABBR = {ene:0,feb:1,mar:2,abr:3,may:4,jun:5,jul:6,ago:7,sep:8,oct:9,nov:10,dic:11};
+  const blockStarts = [...rawText.matchAll(/SALDO FINAL DEL PERIODO ANTERIOR:?\s*\$?\s*([\d,]+\.\d{2})/gi)];
+  const results = [];
+
+  for(let b=0; b<blockStarts.length; b++){
+    const startMatch = blockStarts[b];
+    const blockTextStart = startMatch.index + startMatch[0].length;
+    const blockTextEnd = b+1 < blockStarts.length ? blockStarts[b+1].index : rawText.length;
+    let blockText = rawText.slice(blockTextStart, blockTextEnd);
+    const totalIdx = blockText.search(/\bTOTAL\b/);
+    if(totalIdx !== -1) blockText = blockText.slice(0, totalIdx);
+
+    let prevSaldo = parseFloat(startMatch[1].replace(/,/g,''));
+    const rowAnchor = /(\d{2})-([A-Za-zé]{3})-(\d{4})\s+\d{3,10}\s+/gi;
+    const matches = [...blockText.matchAll(rowAnchor)];
+
+    for(let i=0; i<matches.length; i++){
+      const m = matches[i];
+      const segStart = m.index + m[0].length;
+      const segEnd = i+1 < matches.length ? matches[i+1].index : blockText.length;
+      const segment = blockText.slice(segStart, segEnd);
+
+      const nums = [...segment.matchAll(/[\d,]+\.\d{2}/g)];
+      if(nums.length === 0) continue;
+      const saldo = parseFloat(nums[nums.length-1][0].replace(/,/g,''));
+      if(isNaN(saldo)) continue;
+
+      const delta = saldo - prevSaldo;
+      prevSaldo = saldo; // avanza aunque no sea retiro, para no romper la cadena
+
+      if(delta >= -0.005) continue; // depósito o sin cambio — no es gasto
+      const monto = Math.round((-delta) * 100) / 100;
+
+      let desc = segment.slice(0, nums[nums.length-1].index)
+        .replace(/CLAVE DE RASTREO\s+\S+/gi, ' ')
+        .replace(/\bREF\s+\S+/gi, ' ')
+        .replace(/\bRFC\s+\S+/gi, ' ')
+        .replace(/DE LA CUENTA\s+\d+/gi, ' ')
+        .replace(/\(1\)\s*DATO NO VERIFICADO POR ESTA INSTITUCION/gi, ' ')
+        .replace(/CONCEPTO\s+\S+/gi, ' ')
+        .replace(/[\d,]+\.\d{2}/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 110);
+      if(!desc) desc = 'Movimiento sin descripción';
+
+      const dia = parseInt(m[1], 10);
+      const mesTxt = m[2].toLowerCase().slice(0,3);
+      const mesIdx = MESES_ABBR[mesTxt];
+      const year = parseInt(m[3], 10);
+      if(mesIdx === undefined) continue;
+      const fecha = `${year}-${String(mesIdx+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+
+      results.push({ fecha, descripcion: desc, monto });
+    }
+  }
+  return results;
+}
+
 const BANK_PARSERS = [
   { name: 'American Express', detect: t => /AMERICAN\s*EXPRESS/i.test(t), parse: parseAmexText, detectCard: detectAmexCardName },
   { name: 'Santander (tarjeta de crédito)', detect: t => /Santander/i.test(t) && /Numero de tarjeta/i.test(t), parse: parseSantanderCreditText, detectCard: detectSantanderCard },
+  { name: 'Santander (cuenta de débito)', detect: t => /Santander/i.test(t) && /SALDO FINAL DEL PERIODO ANTERIOR/i.test(t) && !/Numero de tarjeta/i.test(t), parse: parseSantanderChecking, detectCard: () => 'Santander Débito', noCategoryGuess: true },
   // Próximo banco: sube un PDF de ejemplo al chat y se agrega aquí un parser nuevo.
 ];
 
@@ -555,7 +616,7 @@ async function handlePdfUpload(file){
       id: uid(),
       include: true,
       card: defaultCardId,
-      category: guessCategoryId(p.descripcion),
+      category: bankParser.noCategoryGuess ? null : guessCategoryId(p.descripcion),
     }));
     state.previewStatus = '';
     renderImport();
@@ -583,7 +644,7 @@ async function confirmPreviewImport(){
 
   const inserts = rows.map(r => ({
     fecha: r.fecha, descripcion: r.descripcion, monto: r.monto,
-    tarjeta_id: idMap[r.card] || r.card, categoria_id: r.category,
+    tarjeta_id: idMap[r.card] || r.card, categoria_id: r.category || null,
   }));
   const { error } = await sb.from('movimientos').insert(inserts);
   if(error){ showToast('Error: '+error.message); return; }
@@ -610,7 +671,9 @@ function renderMonthStrip(){
 /* ---------- Dashboard ---------- */
 function renderDashboard(){
   const el = document.getElementById('viewDashboard');
-  const monthTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth);
+  const monthTxAll = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth);
+  const monthTx = monthTxAll.filter(t=>t.catName); // solo lo categorizado cuenta
+  const uncatCount = monthTxAll.length - monthTx.length;
   const total = monthTx.reduce((s,t)=>s+Number(t.monto),0);
   const byCard = {}, byCat = {};
   monthTx.forEach(t=>{
@@ -621,20 +684,30 @@ function renderDashboard(){
   const catEntries = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   const maxCat = catEntries.length ? catEntries[0][1] : 1;
 
-  if(monthTx.length===0){
+  const uncatBanner = uncatCount > 0 ? `
+    <div class="card" style="background:var(--alert-soft);border-color:var(--alert)">
+      <p style="margin:0;font-size:13px;color:var(--ink)">
+        <strong>${uncatCount} movimiento${uncatCount===1?'':'s'} sin categorizar</strong> este mes — no cuentan en el total.
+        Ve a <strong>Movimientos</strong> y asígnales categoría a los que sí sean gasto real.
+      </p>
+    </div>` : '';
+
+  if(monthTxAll.length===0){
     el.innerHTML = `<div class="card"><div class="empty-state">Sin movimientos en ${monthLabel(state.currentMonth)} todavía.<br>Ve a <strong>Importar</strong> o agrega uno manual en <strong>Movimientos</strong>.</div></div>`;
     return;
   }
   el.innerHTML = `
+    ${uncatBanner}
     <div class="summary-row">
       <div class="card stat"><div class="num spend">${fmtMoney(total)}</div><div class="label">Gasto total · ${monthLabel(state.currentMonth)}</div></div>
-      <div class="card stat"><div class="num">${monthTx.length}</div><div class="label">Movimientos</div></div>
+      <div class="card stat"><div class="num">${monthTx.length}</div><div class="label">Movimientos categorizados</div></div>
       <div class="card stat"><div class="num" style="font-size:20px">${topCard?topCard[0]:'—'}</div><div class="label">Tarjeta con más gasto ${topCard?'('+fmtMoney(topCard[1])+')':''}</div></div>
     </div>
     <div class="card">
       <p class="card-title">Gasto por categoría</p>
+      ${catEntries.length===0 ? `<div class="empty-state">Nada categorizado todavía este mes.</div>` : `
       ${catEntries.map(([name,amt])=>`<div class="cat-line"><span class="cat-dot" style="background:${catColor(name)}"></span><span class="cat-name">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
-      <div style="margin-top:10px">${catEntries.map(([name,amt])=>`<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`).join('')}</div>
+      <div style="margin-top:10px">${catEntries.map(([name,amt])=>`<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`).join('')}</div>`}
     </div>
     <div class="card">
       <p class="card-title">Gasto por tarjeta</p>
@@ -668,7 +741,12 @@ function renderTransactions(){
             <tr>
               <td>${t.fecha}</td><td>${t.descripcion}</td>
               <td><span class="card-pill">${t.cardName}</span></td>
-              <td><span class="cat-pill" style="background:${catColor(t.catName)}22;color:${catColor(t.catName)}">${t.catName}</span></td>
+              <td>
+                <select data-catedit="${t.id}" style="${t.catName?'':'border-color:var(--alert);color:var(--alert)'}">
+                  <option value="" ${!t.catName?'selected':''}>— Sin categorizar —</option>
+                  ${state.categories.map(c=>`<option value="${c.id}" ${c.id===t.categoria_id?'selected':''}>${c.nombre}</option>`).join('')}
+                </select>
+              </td>
               <td class="amt-cell">${fmtMoney(Number(t.monto))}</td>
               <td class="row-actions"><button data-del="${t.id}" title="Eliminar">✕</button></td>
             </tr>`).join('')}
@@ -687,6 +765,14 @@ function renderTransactions(){
     if(error){ showToast('Error: '+error.message); return; }
     showToast('Movimiento agregado');
     await loadAll(); renderAll();
+  });
+  el.querySelectorAll('[data-catedit]').forEach(sel=>{
+    sel.addEventListener('change', async ()=>{
+      const { error } = await sb.from('movimientos').update({ categoria_id: sel.value || null }).eq('id', sel.dataset.catedit);
+      if(error){ showToast('Error: '+error.message); return; }
+      showToast('Categoría actualizada');
+      await loadAll(); renderAll();
+    });
   });
   el.querySelectorAll('[data-del]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -718,7 +804,7 @@ function renderImport(){
               <td><input type="text" data-pfield="descripcion" data-pid2="${r.id}" value="${r.descripcion.replace(/"/g,'&quot;')}"></td>
               <td><input type="number" step="0.01" data-pfield="monto" data-pid2="${r.id}" value="${r.monto}" style="width:90px"></td>
               <td><select data-pfield="card" data-pid2="${r.id}">${[...state.cards, ...state.pendingNewCards].map(c=>`<option value="${c.id}" ${c.id===r.card?'selected':''}>${c.nombre}${state.pendingNewCards.find(p=>p.id===c.id)?' (nueva)':''}</option>`).join('')}</select></td>
-              <td><select data-pfield="category" data-pid2="${r.id}">${state.categories.map(c=>`<option value="${c.id}" ${c.id===r.category?'selected':''}>${c.nombre}</option>`).join('')}</select></td>
+              <td><select data-pfield="category" data-pid2="${r.id}"><option value="" ${!r.category?'selected':''}>— Sin categoría —</option>${state.categories.map(c=>`<option value="${c.id}" ${c.id===r.category?'selected':''}>${c.nombre}</option>`).join('')}</select></td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -906,10 +992,9 @@ function renderAnalysis(){
     return;
   }
 
-  // Gasto total por mes (todos los meses con datos, más recientes primero para la tabla,
-  // pero la gráfica se dibuja en orden cronológico)
+  // Gasto total por mes (solo movimientos categorizados)
   const byMonth = {};
-  state.transactions.forEach(t=>{
+  state.transactions.filter(t=>t.catName).forEach(t=>{
     const mk = monthKey(t.fecha);
     byMonth[mk] = (byMonth[mk] || 0) + Number(t.monto);
   });
@@ -939,8 +1024,8 @@ function renderAnalysis(){
   const months = allMonths(); // desc
   const curIdx = months.indexOf(state.currentMonth);
   const prevMonth = curIdx >= 0 && curIdx+1 < months.length ? months[curIdx+1] : null;
-  const curTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth);
-  const prevTx = prevMonth ? state.transactions.filter(t=>monthKey(t.fecha)===prevMonth) : [];
+  const curTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth && t.catName);
+  const prevTx = prevMonth ? state.transactions.filter(t=>monthKey(t.fecha)===prevMonth && t.catName) : [];
   const curByCat = {}, prevByCat = {};
   curTx.forEach(t=> curByCat[t.catName] = (curByCat[t.catName]||0) + Number(t.monto));
   prevTx.forEach(t=> prevByCat[t.catName] = (prevByCat[t.catName]||0) + Number(t.monto));
