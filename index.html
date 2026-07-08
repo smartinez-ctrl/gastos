@@ -756,7 +756,11 @@ function renderTransactions(){
           ${monthTx.map(t=>`
             <tr>
               <td>${t.fecha}</td><td>${t.descripcion}</td>
-              <td><span class="card-pill">${t.cardName}</span></td>
+              <td>
+                <select data-cardedit="${t.id}">
+                  ${state.cards.map(c=>`<option value="${c.id}" ${c.id===t.tarjeta_id?'selected':''}>${c.nombre}</option>`).join('')}
+                </select>
+              </td>
               <td>
                 <select data-catedit="${t.id}" style="${t.catName?'':'border-color:var(--alert);color:var(--alert)'}">
                   <option value="" ${!t.catName?'selected':''}>— Sin categorizar —</option>
@@ -787,6 +791,14 @@ function renderTransactions(){
       const { error } = await sb.from('movimientos').update({ categoria_id: sel.value || null }).eq('id', sel.dataset.catedit);
       if(error){ showToast('Error: '+error.message); return; }
       showToast('Categoría actualizada');
+      await loadAll(); renderAll();
+    });
+  });
+  el.querySelectorAll('[data-cardedit]').forEach(sel=>{
+    sel.addEventListener('change', async ()=>{
+      const { error } = await sb.from('movimientos').update({ tarjeta_id: sel.value }).eq('id', sel.dataset.cardedit);
+      if(error){ showToast('Error: '+error.message); return; }
+      showToast('Tarjeta actualizada');
       await loadAll(); renderAll();
     });
   });
@@ -904,7 +916,7 @@ function renderImport(){
     const noCategory = document.getElementById('csvNoCategory').checked;
     if(!raw){ showToast('Pega al menos una línea'); return; }
     const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
-    let added = 0, skipped = 0, dupSkipped = 0;
+    let skipped = 0, dupCount = 0;
     const existingKeys = new Set(state.transactions.map(t =>
       `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.cardName||'').toLowerCase()}|${(t.descripcion||'').toLowerCase().trim()}`
     ));
@@ -921,18 +933,26 @@ function renderImport(){
         card = data; state.cards.push(card);
       }
       const key = `${date}|${Math.round(amount*100)}|${(card?card.nombre:'').toLowerCase()}|${desc.toLowerCase().trim()}`;
-      if(existingKeys.has(key)){ dupSkipped++; continue; }
-      rows.push({ fecha:date, descripcion:desc, monto:amount, tarjeta_id: card ? card.id : null, categoria_id: noCategory ? null : guessCategoryId(desc) });
-      added++;
+      const isDup = existingKeys.has(key);
+      if(isDup) dupCount++;
+      rows.push({
+        id: uid(), include: !isDup, isDup,
+        fecha: date, descripcion: desc, monto: amount,
+        card: card ? card.id : (state.cards[0] ? state.cards[0].id : null),
+        category: noCategory ? null : guessCategoryId(desc),
+      });
     }
-    if(rows.length){
-      const { error } = await sb.from('movimientos').insert(rows);
-      if(error){ showToast('Error: '+error.message); return; }
+    if(rows.length === 0){
+      document.getElementById('importStatus').textContent = `Nada que revisar — ${skipped} línea(s) omitida(s) por formato inválido.`;
+      return;
     }
-    document.getElementById('importStatus').textContent = `${added} importados, ${skipped} omitidos, ${dupSkipped} posibles duplicados omitidos`;
+    state.previewRows = rows;
+    state.previewBank = 'CSV manual';
+    state.pendingNewCards = [];
+    if(dupCount > 0) showToast(`${dupCount} posible(s) duplicado(s) detectado(s) y desmarcado(s)`);
+    if(skipped > 0) showToast(`${skipped} línea(s) omitida(s) por formato inválido`);
     document.getElementById('csvInput').value = '';
-    showToast(`${added} movimientos importados`);
-    await loadAll(); renderMonthStrip();
+    renderImport();
   });
 }
 
