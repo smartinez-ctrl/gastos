@@ -166,6 +166,7 @@ let state = {
   previewRows: [],     // parsed-but-unconfirmed rows from a PDF upload
   previewBank: null,
   previewStatus: '',   // status/progress text while parsing
+  previewDebugText: null, // raw extracted text, shown when parsing finds 0 rows
 };
 
 if(window.pdfjsLib){
@@ -420,6 +421,7 @@ const BANK_PARSERS = [
 
 async function handlePdfUpload(file){
   state.previewStatus = 'Leyendo PDF...';
+  state.previewDebugText = null;
   renderImport();
   try{
     const text = await extractPdfText(file);
@@ -435,7 +437,8 @@ async function handlePdfUpload(file){
     const parsed = bankParser.parse(text);
     if(parsed.length === 0){
       state.previewStatus = '';
-      showToast('No encontré movimientos en este PDF — revisa que sea el estado de cuenta completo');
+      state.previewDebugText = text;
+      showToast('No encontré movimientos — revisa el texto extraído abajo');
       renderImport();
       return;
     }
@@ -604,6 +607,13 @@ function renderImport(){
       </div>
     </div>` : '';
 
+  const debugSection = state.previewDebugText ? `
+    <div class="card">
+      <p class="card-title">Texto extraído del PDF (debug)</p>
+      <p class="hint">No encontré movimientos con el patrón esperado. Copia este texto y pégamelo en el chat — así ajusto el parser contra lo que realmente extrae tu PDF, en vez de adivinar.</p>
+      <textarea readonly style="min-height:220px">${state.previewDebugText.replace(/</g,'&lt;')}</textarea>
+    </div>` : '';
+
   el.innerHTML = `
     <div class="card">
       <p class="card-title">Subir PDF de estado de cuenta</p>
@@ -615,6 +625,7 @@ function renderImport(){
       </label>
     </div>
     ${previewSection}
+    ${debugSection}
     <div class="card">
       <p class="card-title">Importar movimientos (CSV manual)</p>
       <p class="hint">Alternativa si tu banco aún no tiene parser de PDF. Pega líneas <code>fecha,descripción,monto,tarjeta</code> — una por línea, fecha en <code>YYYY-MM-DD</code>. Categoría se asigna sola por palabra clave. Ejemplo:<br>
