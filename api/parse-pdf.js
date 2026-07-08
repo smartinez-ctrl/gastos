@@ -21,6 +21,7 @@ Reglas:
 - Si el movimiento es parte de una compra a meses sin intereses (MSI) y el estado de cuenta indica el número de pago (ej. "09 DE 12"), llena cuota_actual y cuota_total con esos números; si no aplica, déjalos en null.
 - fecha en formato YYYY-MM-DD. Convierte abreviaturas de mes en español (ene, feb, mar, abr, may, jun, jul, ago, sep, oct, nov, dic).
 - monto siempre positivo salvo el caso de reembolso de arriba.
+- Si un movimiento muestra un monto en moneda extranjera (ej. "23.24 USD TC 17.9001") junto con su conversión a pesos mexicanos, usa SIEMPRE el monto ya convertido a MXN (el que realmente se cobró en la tarjeta), NUNCA el monto en la moneda original. El monto en USD/EUR/etc. es solo informativo.
 - descripcion: nombre del comercio limpio, sin códigos de referencia largos (RFC, folios).
 - No inventes movimientos ni montos. Si no puedes leer un renglón con confianza, omítelo — mejor incompleto que incorrecto.
 - Responde solo con el JSON array, nada más, ni siquiera una palabra de contexto.`;
