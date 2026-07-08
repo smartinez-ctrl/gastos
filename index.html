@@ -256,6 +256,40 @@ function guessCategoryId(desc){
   const otro = state.categories.find(c=>c.nombre==='Otro');
   return otro ? otro.id : (state.categories[0] && state.categories[0].id);
 }
+// Extrae un "nombre de comercio" limpio de una descripción de movimiento,
+// quitando códigos de referencia (tokens con dígitos) para usarlo como keyword.
+function merchantKey(desc){
+  if(!desc) return null;
+  const words = desc.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // quita acentos
+    .split(/\s+/)
+    .filter(w => w && !/\d/.test(w) && w.length >= 3);
+  if(words.length === 0) return null;
+  const key = words.slice(0, 3).join(' ').trim();
+  return key.length >= 3 ? key : null;
+}
+// Aprende: la próxima vez que aparezca este comercio, se sugiere esta categoría solo.
+// Se llama cada vez que se confirma/edita una categoría (import o edición manual).
+async function learnCategory(categoriaId, descripcion){
+  if(!categoriaId) return;
+  const key = merchantKey(descripcion);
+  if(!key) return;
+  const target = state.categories.find(c=>c.id===categoriaId);
+  if(!target) return;
+  const already = (target.keywords||[]).some(k=>k.toLowerCase()===key);
+  // Quita el keyword de cualquier OTRA categoría para no generar ambigüedad.
+  for(const cat of state.categories){
+    if(cat.id === categoriaId) continue;
+    if(!(cat.keywords||[]).some(k=>k.toLowerCase()===key)) continue;
+    const newKw = cat.keywords.filter(k=>k.toLowerCase()!==key);
+    const { error } = await sb.from('categorias').update({ keywords: newKw }).eq('id', cat.id);
+    if(!error) cat.keywords = newKw;
+  }
+  if(already) return;
+  const newKw = [...(target.keywords||[]), key];
+  const { error } = await sb.from('categorias').update({ keywords: newKw }).eq('id', categoriaId);
+  if(!error) target.keywords = newKw;
+}
 function catColor(name){
   const c = state.categories.find(c=>c.nombre===name);
   return c ? c.color : '#767A72';
@@ -664,6 +698,7 @@ async function confirmPreviewImport(){
   }));
   const { error } = await sb.from('movimientos').insert(inserts);
   if(error){ showToast('Error: '+error.message); return; }
+  for(const r of rows){ await learnCategory(r.category, r.descripcion); }
   showToast(`${rows.length} movimientos importados`);
   state.previewRows = [];
   state.previewBank = null;
@@ -790,6 +825,10 @@ function renderTransactions(){
     sel.addEventListener('change', async ()=>{
       const { error } = await sb.from('movimientos').update({ categoria_id: sel.value || null }).eq('id', sel.dataset.catedit);
       if(error){ showToast('Error: '+error.message); return; }
+      if(sel.value){
+        const tx = state.transactions.find(t=>t.id===sel.dataset.catedit);
+        if(tx) await learnCategory(sel.value, tx.descripcion);
+      }
       showToast('Categoría actualizada');
       await loadAll(); renderAll();
     });
