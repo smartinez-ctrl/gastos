@@ -396,9 +396,12 @@ function parseAmexText(rawText){
   const searchFrom = startIdx === -1 ? 0 : startIdx;
   const endMarkers = [
     /Resumen de Planes de Pagos Diferidos con Intereses/i,
+    /Resumen de Meses sin Intereses/i,
     /Conoce más de Planea tu Pago/i,
     /Puntos Aeroméxico Rewards/i,
     /Comprobante Fiscal Digital/i,
+    /Membership\s*Rewards/i,
+    /Información al Tarjetahabiente/i,
   ];
   let endIdx = rawText.length;
   endMarkers.forEach(re=>{
@@ -414,7 +417,8 @@ function parseAmexText(rawText){
   windowText = windowText
     .replace(/Total de las transacciones en \$ de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
     .replace(/Total de Cargos en Moneda Extranjera de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
-    .replace(/Total de Cargos para[^\n]*?(?=\d{1,2}\s+de\s+[A-Za-zé]+)/gi, ' ');
+    .replace(/Total de Cargos para[^\n]*?(?=\d{1,2}\s+de\s+[A-Za-zé]+)/gi, ' ')
+    .replace(/Total de Meses sin Intereses[\s\S]{0,200}?[\d,]+\.\d{2}/gi, ' ');
 
   // Detectar bloques por tarjetahabiente ("Nuevos cargos y abonos de X")
   // Se compara por número de cuenta (más confiable que el nombre, que a veces
@@ -464,6 +468,10 @@ function parseAmexText(rawText){
       const montoAbs = parseFloat(last[0].replace(/,/g,''));
       if(isNaN(montoAbs) || montoAbs <= 0) continue;
 
+      const cargoMatch = segment.slice(0, last.index).match(/CARGO\s+(\d+)\s+DE\s+(\d+)/i);
+      const cuotaActual = cargoMatch ? parseInt(cargoMatch[1], 10) : null;
+      const cuotaTotal = cargoMatch ? parseInt(cargoMatch[2], 10) : null;
+
       let desc = segment.slice(0, last.index)
         .replace(/RFC\S+/gi, ' ')
         .replace(/\/?REF\S+/gi, ' ')
@@ -474,7 +482,7 @@ function parseAmexText(rawText){
         .slice(0, 80);
       if(!desc) desc = 'Movimiento sin descripción';
 
-      if(isCredit && /PAGO|TRANSFEREN|DEPOSITO/i.test(desc)) continue; // pago a la tarjeta, no un reembolso
+      if(isCredit && /PAGO|TRANSFEREN|DEPOSITO|DIFERIR/i.test(desc)) continue; // pago a la tarjeta, o conversion a MSI (no es un gasto ni un reembolso real)
       const monto = isCredit ? -montoAbs : montoAbs;
 
       const dia = parseInt(m[1], 10);
@@ -488,7 +496,7 @@ function parseAmexText(rawText){
       const fecha = `${year}-${String(mesIdx+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
       results.push({
         fecha, descripcion: desc + (isCredit ? ' (reembolso/cargo regresado)' : '') + (isSecondary && holderName ? ` (${holderName.split(' ')[0]})` : ''),
-        monto,
+        monto, cuotaActual, cuotaTotal,
       });
     }
   });
@@ -564,7 +572,7 @@ function parseSantanderCreditText(rawText){
       .slice(0, 80);
     if(!desc) desc = 'Movimiento sin descripción';
 
-    if(isCredit && /PAGO|TRANSFEREN|DEPOSITO/i.test(desc)) continue; // pago a la tarjeta, no un reembolso
+    if(isCredit && /PAGO|TRANSFEREN|DEPOSITO|DIFERIR/i.test(desc)) continue; // pago a la tarjeta, o conversion a MSI (no es un gasto ni un reembolso real)
     const monto = isCredit ? -montoAbs : montoAbs;
 
     let tipo = 'titular';
