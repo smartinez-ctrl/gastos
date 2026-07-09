@@ -1389,8 +1389,22 @@ function renderSettings(){
   el.innerHTML = `
     <div class="card">
       <p class="card-title">Tarjetas</p>
-      <div class="chip-row">${state.cards.map(c=>`<span class="chip">${c.nombre} <button data-rmcard="${c.id}">✕</button></span>`).join('')}</div>
-      <div style="display:flex;gap:8px"><input type="text" id="newCard" placeholder="Nombre de tarjeta, ej. BBVA Oro" style="max-width:240px"><button class="ghost" id="addCardBtn">Agregar tarjeta</button></div>
+      <p class="hint">Cada tarjeta se detecta automáticamente por número de cuenta al importar un PDF — si el sistema le puso un nombre genérico (ej. "Amex …3000"), puedes renombrarla aquí. Los movimientos ya importados con esa tarjeta se quedan igual, solo cambia el nombre que ves.</p>
+      <table>
+        <thead><tr><th>Nombre</th><th></th><th></th></tr></thead>
+        <tbody>
+          ${state.cards.map(c=>`
+            <tr data-cardrow="${c.id}">
+              <td><input type="text" data-cardfield="nombre" value="${c.nombre.replace(/"/g,'&quot;')}" style="min-width:200px"></td>
+              <td><button class="ghost" data-savecard="${c.id}">Guardar</button></td>
+              <td><button data-rmcard="${c.id}" title="Eliminar" style="background:none;border:none;cursor:pointer;color:var(--muted)">✕</button></td>
+            </tr>`).join('')}
+          <tr>
+            <td><input type="text" id="newCard" placeholder="Nombre de tarjeta, ej. BBVA Oro"></td>
+            <td colspan="2"><button class="primary" id="addCardBtn">Agregar tarjeta</button></td>
+          </tr>
+        </tbody>
+      </table>
     </div>
     <div class="card">
       <p class="card-title">Categorías</p>
@@ -1433,6 +1447,16 @@ function renderSettings(){
     const { error } = await sb.from('tarjetas').insert({ nombre: v });
     if(error){ showToast('Error: '+error.message); return; }
     showToast('Tarjeta agregada'); await loadAll(); renderAll();
+  });
+  el.querySelectorAll('[data-savecard]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const row = el.querySelector(`[data-cardrow="${btn.dataset.savecard}"]`);
+      const nombre = row.querySelector('[data-cardfield="nombre"]').value.trim();
+      if(!nombre){ showToast('El nombre no puede quedar vacío'); return; }
+      const { error } = await sb.from('tarjetas').update({ nombre }).eq('id', btn.dataset.savecard);
+      if(error){ showToast('Error: '+error.message); return; }
+      showToast('Tarjeta renombrada'); await loadAll(); renderAll();
+    });
   });
   document.getElementById('addCatBtn').addEventListener('click', async ()=>{
     const v = document.getElementById('newCat').value.trim();
