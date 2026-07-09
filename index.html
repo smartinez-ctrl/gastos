@@ -836,7 +836,10 @@ async function handleAiPdfExtract(file){
       body: JSON.stringify({ images }),
     });
     const data = await resp.json();
-    if(!resp.ok){ throw new Error(data.error || `Error del servidor (${resp.status})`); }
+    if(!resp.ok){
+      if(data.raw) state.previewDebugText = `[Respuesta cruda de la IA, no se pudo interpretar como JSON]\n\n${data.raw}`;
+      throw new Error(data.error || `Error del servidor (${resp.status})`);
+    }
 
     const parsed = (data.rows || []).filter(r => r && r.fecha && r.descripcion && typeof r.monto === 'number' && !isNaN(r.monto));
     if(parsed.length === 0){
