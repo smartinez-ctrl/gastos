@@ -396,7 +396,15 @@ async function extractPdfText(file){
     lines.sort((a,b) => b.y - a.y); // de arriba hacia abajo
     lines.forEach(line => {
       line.items.sort((a,b) => a.x - b.x); // de izquierda a derecha
-      full += line.items.map(it=>it.str).join(' ') + '\n';
+      const lastItem = line.items[line.items.length - 1];
+      // Si el último elemento de la fila (el más a la derecha) es un monto "puro"
+      // (nada más que el número, sin texto pegado), lo marcamos con un caracter
+      // invisible — así los parsers pueden distinguir el monto real de la columna
+      // de importe de cualquier otro número que aparezca dentro de la descripción
+      // (ej. "Dólar U.S.A. 525.89 TC:18.24844", donde ni 525.89 ni 18.24844 son
+      // el elemento más a la derecha de su fila en el layout real del PDF).
+      const isPureAmount = lastItem && /^[\d,]+\.\d{2}$/.test(lastItem.str.trim());
+      full += line.items.map(it=>it.str).join(' ') + (isPureAmount ? '\u200B' : '') + '\n';
     });
     full += '\n';
   }
@@ -501,9 +509,15 @@ function parseAmexText(rawText){
       // — su posición respecto al monto en MXN varía entre estados de cuenta,
       // así que se descarta antes de decidir cuál número es el monto real.
       const segmentForAmount = segment.replace(/(Dólar U\.S\.A\.?|Corona Sueca|Euro|Libra Esterlina)\.?\s*[\d,]+[.,]\d{2}\s*TC:?\s*[\d,]+\.\d+/gi, ' ');
-      const amounts = [...segmentForAmount.matchAll(/[\d,]+\.\d{2}/g)];
+      const amounts = [...segmentForAmount.matchAll(/[\d,]+\.\d{2}\u200B?/g)];
       if(amounts.length === 0) continue;
-      const last = amounts[amounts.length-1];
+      // Preferir montos marcados con \u200B (eran el elemento más a la derecha de
+      // su fila visual en el PDF = la columna real de "Importe en MN"). Si por lo
+      // que sea ninguno quedó marcado, cae al comportamiento anterior (el último
+      // número del segmento) como red de seguridad.
+      const markedAmounts = amounts.filter(a => a[0].includes('\u200B'));
+      const candidates = markedAmounts.length ? markedAmounts : amounts;
+      const last = candidates[candidates.length-1];
       const afterLast = segmentForAmount.slice(last.index + last[0].length, last.index + last[0].length + 6);
       // "CR" debe aparecer como marcador aislado justo después del monto, no como
       // substring de un RFC (ej. "RFCRDI841003QJ4" contiene "CR" por coincidencia).
@@ -512,7 +526,7 @@ function parseAmexText(rawText){
       // se reste del gasto original en vez de desaparecer sin dejar rastro).
       const isCredit = /^\s*CR\b/.test(afterLast);
 
-      const montoAbs = parseFloat(last[0].replace(/,/g,''));
+      const montoAbs = parseFloat(last[0].replace(/,/g,'').replace(/\u200B/g,''));
       if(isNaN(montoAbs) || montoAbs <= 0) continue;
 
       const cargoMatch = segment.match(/CARGO\s+(\d+)\s+DE\s+(\d+)/i);
@@ -520,6 +534,7 @@ function parseAmexText(rawText){
       const cuotaTotal = cargoMatch ? parseInt(cargoMatch[2], 10) : null;
 
       let desc = segment.slice(0, last.index)
+        .replace(/\u200B/g, '')
         .replace(/RFC\S+/gi, ' ')
         .replace(/\/?REF\S+/gi, ' ')
         .replace(/Dólar U\.S\.A\.?\s*[\d,]+\.\d{2}\s*TC:?\s*[\d,]+\.\d+/gi, ' ')
