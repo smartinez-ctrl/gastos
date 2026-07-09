@@ -377,6 +377,7 @@ async function extractPdfText(file){
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: buf}).promise;
   let full = '';
+  let amountColX = null; // posición X de la columna "Importe" — se detecta una vez y se reusa en páginas siguientes que no repiten el encabezado
   for(let i=1; i<=pdf.numPages; i++){
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
@@ -386,6 +387,8 @@ async function extractPdfText(file){
     const items = content.items
       .filter(it => it.str && it.str.trim())
       .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
+    const importeHeader = items.find(it => /Importe/i.test(it.str));
+    if(importeHeader) amountColX = importeHeader.x;
     const lines = [];
     const yTolerance = 2.5;
     items.forEach(it => {
@@ -398,13 +401,14 @@ async function extractPdfText(file){
       line.items.sort((a,b) => a.x - b.x); // de izquierda a derecha
       const lastItem = line.items[line.items.length - 1];
       // Si el último elemento de la fila (el más a la derecha) es un monto "puro"
-      // (nada más que el número, sin texto pegado), lo marcamos con un caracter
-      // invisible — así los parsers pueden distinguir el monto real de la columna
-      // de importe de cualquier otro número que aparezca dentro de la descripción
-      // (ej. "Dólar U.S.A. 525.89 TC:18.24844", donde ni 525.89 ni 18.24844 son
-      // el elemento más a la derecha de su fila en el layout real del PDF).
+      // (nada más que el número, sin texto pegado) Y además cae dentro de la
+      // columna real de "Importe" (no solo el último texto de una fila corta que
+      // no llega hasta esa columna, como "Dólar U.S.A. 250.06" sin nada más al
+      // lado), lo marcamos con un caracter invisible. Así los parsers distinguen
+      // el monto real de cualquier otro número suelto en la descripción.
       const isPureAmount = lastItem && /^[\d,]+\.\d{2}$/.test(lastItem.str.trim());
-      full += line.items.map(it=>it.str).join(' ') + (isPureAmount ? '\u200B' : '') + '\n';
+      const inAmountColumn = amountColX === null || (lastItem && lastItem.x >= amountColX - 30);
+      full += line.items.map(it=>it.str).join(' ') + (isPureAmount && inAmountColumn ? '\u200B' : '') + '\n';
     });
     full += '\n';
   }
@@ -508,7 +512,7 @@ function parseAmexText(rawText){
       // Quitar el sub-monto en moneda extranjera (Dólar, Corona Sueca, Euro, etc.)
       // — su posición respecto al monto en MXN varía entre estados de cuenta,
       // así que se descarta antes de decidir cuál número es el monto real.
-      const segmentForAmount = segment.replace(/(Dólar U\.S\.A\.?|Corona Sueca|Euro|Libra Esterlina)\.?\s*[\d,]+[.,]\d{2}\s*TC:?\s*[\d,]+\.\d+/gi, ' ');
+      const segmentForAmount = segment.replace(/(Dólar U\.S\.A\.?|Corona Sueca|Euro|Libra Esterlina)\.?\s*[\d,]+[.,]\d{2}(\s*TC:?\s*[\d,]+\.\d+)?/gi, ' ');
       const amounts = [...segmentForAmount.matchAll(/[\d,]+\.\d{2}\u200B?/g)];
       if(amounts.length === 0) continue;
       // Preferir montos marcados con \u200B (eran el elemento más a la derecha de
@@ -537,7 +541,7 @@ function parseAmexText(rawText){
         .replace(/\u200B/g, '')
         .replace(/RFC\S+/gi, ' ')
         .replace(/\/?REF\S+/gi, ' ')
-        .replace(/Dólar U\.S\.A\.?\s*[\d,]+\.\d{2}\s*TC:?\s*[\d,]+\.\d+/gi, ' ')
+        .replace(/Dólar U\.S\.A\.?\s*[\d,]+\.\d{2}(\s*TC:?\s*[\d,]+\.\d+)?/gi, ' ')
         .replace(/CARGO\s+\d+\s+DE\s+\d+/gi, ' ')
         .replace(/\s{2,}/g, ' ')
         .trim()
