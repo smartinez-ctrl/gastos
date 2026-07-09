@@ -938,7 +938,13 @@ function renderInstallmentsCard(){
 /* ---------- Transactions view ---------- */
 function renderTransactions(){
   const el = document.getElementById('viewTransactions');
-  const monthTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth).sort((a,b)=> b.fecha.localeCompare(a.fecha));
+  if(!state.filterCard) state.filterCard = '';
+  if(!state.filterCat) state.filterCat = '';
+  const monthTx = state.transactions
+    .filter(t=>monthKey(t.fecha)===state.currentMonth)
+    .filter(t=>!state.filterCard || t.tarjeta_id===state.filterCard)
+    .filter(t=>!state.filterCat || t.categoria_id===state.filterCat)
+    .sort((a,b)=> b.fecha.localeCompare(a.fecha));
   el.innerHTML = `
     <div class="card">
       <p class="card-title">Agregar movimiento manual</p>
@@ -955,8 +961,16 @@ function renderTransactions(){
       <p class="small-muted" style="margin:8px 0 0">Deja "Cuota actual/total" vacío para un pago normal (neto). Llénalos si es una compra a meses (MSI) — así se ve el avance de cuotas.</p>
     </div>
     <div class="card">
-      <div class="flex-between"><p class="card-title" style="margin:0">Movimientos · ${monthLabel(state.currentMonth)}</p><span class="small-muted">${monthTx.length} registros</span></div>
-      ${monthTx.length===0 ? `<div class="empty-state">Sin movimientos este mes.</div>` : `
+      <div class="flex-between">
+        <p class="card-title" style="margin:0">Movimientos · ${monthLabel(state.currentMonth)}</p>
+        <span class="small-muted">${monthTx.length} registros</span>
+      </div>
+      <div class="form-grid" style="margin-bottom:12px">
+        <div><label>Filtrar por tarjeta</label><select id="filterCardSel"><option value="">Todas</option>${state.cards.map(c=>`<option value="${c.id}" ${c.id===state.filterCard?'selected':''}>${c.nombre}</option>`).join('')}</select></div>
+        <div><label>Filtrar por categoría</label><select id="filterCatSel"><option value="">Todas</option>${state.categories.map(c=>`<option value="${c.id}" ${c.id===state.filterCat?'selected':''}>${c.nombre}</option>`).join('')}</select></div>
+        ${(state.filterCard || state.filterCat) ? `<div style="align-self:end"><button class="ghost" id="clearFilterBtn">Quitar filtros</button></div>` : ''}
+      </div>
+      ${monthTx.length===0 ? `<div class="empty-state">Sin movimientos${(state.filterCard||state.filterCat)?' con este filtro':' este mes'}.</div>` : `
       <table>
         <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead>
         <tbody>
@@ -982,6 +996,10 @@ function renderTransactions(){
       </table>`}
     </div>`;
 
+  document.getElementById('filterCardSel').addEventListener('change', (e)=>{ state.filterCard = e.target.value; renderTransactions(); });
+  document.getElementById('filterCatSel').addEventListener('change', (e)=>{ state.filterCat = e.target.value; renderTransactions(); });
+  const clearBtn = document.getElementById('clearFilterBtn');
+  if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.filterCard=''; state.filterCat=''; renderTransactions(); });
   document.getElementById('addTxBtn').addEventListener('click', async ()=>{
     const date = document.getElementById('txDate').value;
     const desc = document.getElementById('txDesc').value.trim();
@@ -1016,24 +1034,13 @@ function renderTransactions(){
       await loadAll(); renderAll();
     });
   });
-  const cardEditSelects = el.querySelectorAll('[data-cardedit]');
-  console.log('[cardedit] selects encontrados:', cardEditSelects.length);
-  cardEditSelects.forEach(sel=>{
+  el.querySelectorAll('[data-cardedit]').forEach(sel=>{
     sel.addEventListener('change', async ()=>{
-      console.log('[cardedit] change disparado. movimiento:', sel.dataset.cardedit, 'nueva tarjeta:', sel.value);
-      showToast('(debug) cambio detectado, guardando...');
-      try{
-        const { data, error } = await sb.from('movimientos').update({ tarjeta_id: sel.value }).eq('id', sel.dataset.cardedit).select();
-        console.log('[cardedit] respuesta de Supabase:', { data, error });
-        if(error){ showToast('Error: '+error.message); return; }
-        if(!data || data.length === 0){ showToast('No se encontró el movimiento a actualizar (revisa RLS/id)'); console.warn('[cardedit] update no afectó ninguna fila'); return; }
-        showToast('Tarjeta actualizada');
-        await loadAll();
-        renderAll();
-      }catch(err){
-        console.error('[cardedit] excepción no controlada:', err);
-        showToast('Error inesperado: ' + err.message);
-      }
+      const { data, error } = await sb.from('movimientos').update({ tarjeta_id: sel.value }).eq('id', sel.dataset.cardedit).select();
+      if(error){ showToast('Error: '+error.message); return; }
+      if(!data || data.length === 0){ showToast('No se encontró el movimiento a actualizar'); return; }
+      showToast('Tarjeta actualizada');
+      await loadAll(); renderAll();
     });
   });
   el.querySelectorAll('[data-del]').forEach(btn=>{
