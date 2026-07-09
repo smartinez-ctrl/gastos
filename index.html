@@ -1016,9 +1016,12 @@ function renderTransactions(){
       await loadAll(); renderAll();
     });
   });
-  el.querySelectorAll('[data-cardedit]').forEach(sel=>{
+  const cardEditSelects = el.querySelectorAll('[data-cardedit]');
+  console.log('[cardedit] selects encontrados:', cardEditSelects.length);
+  cardEditSelects.forEach(sel=>{
     sel.addEventListener('change', async ()=>{
       console.log('[cardedit] change disparado. movimiento:', sel.dataset.cardedit, 'nueva tarjeta:', sel.value);
+      showToast('(debug) cambio detectado, guardando...');
       try{
         const { data, error } = await sb.from('movimientos').update({ tarjeta_id: sel.value }).eq('id', sel.dataset.cardedit).select();
         console.log('[cardedit] respuesta de Supabase:', { data, error });
