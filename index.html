@@ -477,7 +477,9 @@ function parseAmexText(rawText){
     .replace(/Total de Cargos en Moneda Extranjera de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
     .replace(/Total de Transacciones en Moneda Extranjera de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
     .replace(/Total de Cargos para[^\n]*?(?=\d{1,2}\s+de\s+[A-Za-zé]+)/gi, ' ')
-    .replace(/Total de Meses sin Intereses[\s\S]{0,200}?[\d,]+\.\d{2}/gi, ' ');
+    .replace(/Total de Meses sin Intereses[\s\S]{0,200}?[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total de las transacciones y comisiones[\s\S]{0,20}?[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total de IVA sobre transacciones y comisiones[\s\S]{0,20}?[\d,]+\.\d{2}/gi, ' ');
 
   // Detectar bloques por tarjetahabiente ("Nuevos cargos y abonos de X")
   // Se compara por número de cuenta (más confiable que el nombre, que a veces
@@ -548,7 +550,7 @@ function parseAmexText(rawText){
         .slice(0, 80);
       if(!desc) desc = 'Movimiento sin descripción';
 
-      if(isCredit && /PAGO|TRANSFEREN|DEPOSITO|DIFERIR/i.test(desc)) continue; // pago a la tarjeta, o conversion a MSI (no es un gasto ni un reembolso real)
+      if(isCredit && /PAGO RECIBIDO|GRACIAS POR SU PAGO|PAGO POR TRANSFERENCIA|PAGO EN LINEA|TRANSFEREN|DEPOSITO|DIFERIR/i.test(desc)) continue; // pago a la tarjeta, o conversion a MSI (no es un gasto ni un reembolso real)
       const monto = isCredit ? -montoAbs : montoAbs;
 
       const dia = parseInt(m[1], 10);
@@ -638,7 +640,7 @@ function parseSantanderCreditText(rawText){
       .slice(0, 80);
     if(!desc) desc = 'Movimiento sin descripción';
 
-    if(isCredit && /PAGO|TRANSFEREN|DEPOSITO|DIFERIR/i.test(desc)) continue; // pago a la tarjeta, o conversion a MSI (no es un gasto ni un reembolso real)
+    if(isCredit && /PAGO RECIBIDO|GRACIAS POR SU PAGO|PAGO POR TRANSFERENCIA|PAGO EN LINEA|TRANSFEREN|DEPOSITO|DIFERIR/i.test(desc)) continue; // pago a la tarjeta, o conversion a MSI (no es un gasto ni un reembolso real)
     const monto = isCredit ? -montoAbs : montoAbs;
 
     let tipo = 'titular';
