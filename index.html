@@ -250,6 +250,32 @@ function fileToBase64(file){
     reader.readAsDataURL(file);
   });
 }
+// Convierte cada página del PDF en una imagen JPEG comprimida (usando <canvas>,
+// disponible en el navegador). Esto evita mandar el PDF completo — que en
+// estados de cuenta escaneados de varias páginas puede pesar varios MB y
+// rebasar el límite de tamaño de request de las funciones serverless de
+// Vercel (4.5MB) — por imágenes mucho más ligeras que sí caben.
+async function pdfToImages(file, maxDimension=1500, quality=0.72, maxPages=25){
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const numPages = Math.min(pdf.numPages, maxPages);
+  const images = [];
+  for(let i=1; i<=numPages; i++){
+    const page = await pdf.getPage(i);
+    const viewport1 = page.getViewport({ scale: 1 });
+    const scale = Math.min(2, maxDimension / Math.max(viewport1.width, viewport1.height));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+    images.push(dataUrl.split(',')[1]);
+    canvas.width = 0; canvas.height = 0; // libera memoria
+  }
+  return images;
+}
 function fmtMoney(n){
   const neg = n < 0;
   const v = Math.abs(n).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -754,14 +780,22 @@ async function handlePdfUpload(file){
 // falta pegar el PDF en el chat — el propio sistema lo procesa.
 async function handleAiPdfExtract(file){
   state.previewDebugText = state.previewDebugText || null; // conserva el debug si ya se seteó antes de llamar
-  state.previewStatus = 'Este PDF no tiene capa de texto o es de un banco sin parser rápido — intentando leerlo con IA (puede tardar 15-30s)...';
+  state.previewStatus = 'Este PDF no tiene capa de texto o es de un banco sin parser rápido — convirtiendo páginas a imagen y leyendo con IA (puede tardar 20-40s)...';
   renderImport();
   try{
-    const pdfBase64 = await fileToBase64(file);
+    let images = await pdfToImages(file);
+    let totalSize = images.reduce((s,img)=>s+img.length, 0);
+    if(totalSize > 3.8 * 1024 * 1024){
+      // Muy pesado para el límite de Vercel (4.5MB) incluso como imágenes — reintenta más comprimido.
+      images = await pdfToImages(file, 1100, 0.55);
+      totalSize = images.reduce((s,img)=>s+img.length, 0);
+    }
+    if(images.length === 0){ throw new Error('No se pudo renderizar ninguna página del PDF'); }
+    if(totalSize > 4.2 * 1024 * 1024){ throw new Error('El PDF es demasiado grande incluso comprimido (muchas páginas) — súbelo al chat mejor'); }
     const resp = await fetch('/api/parse-pdf', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pdfBase64 }),
+      body: JSON.stringify({ images }),
     });
     const data = await resp.json();
     if(!resp.ok){ throw new Error(data.error || `Error del servidor (${resp.status})`); }

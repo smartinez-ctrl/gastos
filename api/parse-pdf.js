@@ -10,7 +10,7 @@
 // CommonJS a propósito: el repo no tiene package.json con "type":"module",
 // así que Vercel trata los .js como CommonJS por default.
 
-const EXTRACTION_PROMPT = `Eres un extractor de movimientos de estados de cuenta bancarios mexicanos (tarjeta de crédito o débito). Lee el PDF adjunto — puede ser una imagen escaneada sin texto seleccionable, en ese caso léelo visualmente.
+const EXTRACTION_PROMPT = `Eres un extractor de movimientos de estados de cuenta bancarios mexicanos (tarjeta de crédito o débito). Vas a recibir una imagen por cada página del estado de cuenta, en orden. Puede ser una imagen escaneada sin texto seleccionable, en ese caso léelo visualmente.
 
 Devuelve ÚNICAMENTE un JSON array (sin texto adicional, sin markdown, sin backticks, nada antes ni después) con esta forma exacta:
 [{"fecha":"YYYY-MM-DD","descripcion":"NOMBRE DEL COMERCIO","monto":123.45,"cuota_actual":null,"cuota_total":null}]
@@ -38,13 +38,17 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { pdfBase64 } = req.body || {};
-  if (!pdfBase64) {
-    res.status(400).json({ error: 'Falta pdfBase64 en el body' });
+  const { images } = req.body || {};
+  if (!images || !Array.isArray(images) || images.length === 0) {
+    res.status(400).json({ error: 'Falta images (array de páginas en base64 JPEG) en el body' });
     return;
   }
 
   try {
+    const content = [
+      ...images.map(img => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: img } })),
+      { type: 'text', text: EXTRACTION_PROMPT },
+    ];
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -55,13 +59,7 @@ module.exports = async (req, res) => {
       body: JSON.stringify({
         model: 'claude-sonnet-5',
         max_tokens: 8192,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-            { type: 'text', text: EXTRACTION_PROMPT },
-          ],
-        }],
+        messages: [{ role: 'user', content }],
       }),
     });
 
