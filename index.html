@@ -756,23 +756,22 @@ async function handlePdfUpload(file){
       return;
     }
 
-    // Detectar tarjeta a partir del PDF (ej. "Amex Platinum") — SOLO como sugerencia
-    // local. No se guarda en la base hasta que confirmes el import.
-    let defaultCardId = state.cards[0] ? state.cards[0].id : null;
-    let detectedCardName = state.cards[0] ? state.cards[0].nombre : '';
+    // Detectar tarjeta a partir del PDF (ej. "Amex Platinum") — SOLO se agrega
+    // como opción sugerida en el dropdown de cada fila (con "(nueva)" si no
+    // existe todavía). Ya NO se preselecciona sola en ninguna fila — tienes que
+    // elegirla a propósito (con el selector "Aplicar tarjeta a todas las filas"
+    // o fila por fila) antes de poder confirmar el import, para evitar que un
+    // PDF quede pegado sin querer a la tarjeta equivocada.
     state.pendingNewCards = [];
+    let detectedCardName = '';
     if(bankParser.detectCard){
       const cardName = bankParser.detectCard(text);
       detectedCardName = cardName;
       const existing = state.cards.find(c => c.nombre.toLowerCase() === cardName.toLowerCase());
-      if(existing){
-        defaultCardId = existing.id;
-      }else{
-        const tempId = 'new-' + uid();
-        state.pendingNewCards.push({ id: tempId, nombre: cardName });
-        defaultCardId = tempId;
-        showToast(`Tarjeta sugerida: ${cardName} (se crea al confirmar)`);
+      if(!existing){
+        state.pendingNewCards.push({ id: 'new-' + uid(), nombre: cardName });
       }
+      showToast(`Parece ser: ${cardName} — selecciona la tarjeta antes de importar`);
     }
 
     // Detectar posibles duplicados contra lo que ya está importado (mismo día,
@@ -793,7 +792,7 @@ async function handlePdfUpload(file){
         id: uid(),
         include: !isDup,
         isDup,
-        card: defaultCardId,
+        card: null,
         category: bankParser.noCategoryGuess ? null : guessCategoryId(p.descripcion),
       };
     });
@@ -845,8 +844,6 @@ async function handleAiPdfExtract(file){
 
     state.previewBank = 'IA (Claude) — revisa cada renglón con cuidado';
     state.previewDebugText = null;
-    const defaultCardId = state.cards[0] ? state.cards[0].id : null;
-    const defaultCardName = state.cards[0] ? state.cards[0].nombre : '';
     state.pendingNewCards = [];
     const existingKeys = new Set(state.transactions.map(t =>
       `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`
@@ -859,13 +856,13 @@ async function handleAiPdfExtract(file){
       return {
         id: uid(), include: !isDup, isDup,
         fecha: p.fecha, descripcion: String(p.descripcion), monto: Number(p.monto),
-        card: defaultCardId,
+        card: null,
         category: guessCategoryId(String(p.descripcion)),
         cuotaActual: p.cuota_actual || null, cuotaTotal: p.cuota_total || null,
       };
     });
     const dupCount = state.previewRows.filter(r=>r.isDup).length;
-    showToast(`IA leyó ${parsed.length} movimiento(s) — revisa tarjeta y montos${dupCount?`, ${dupCount} posible(s) duplicado(s)`:''}`);
+    showToast(`IA leyó ${parsed.length} movimiento(s) — selecciona la tarjeta antes de importar${dupCount?`, ${dupCount} posible(s) duplicado(s)`:''}`);
     state.previewStatus = '';
     renderImport();
   }catch(err){
@@ -879,6 +876,11 @@ async function handleAiPdfExtract(file){
 async function confirmPreviewImport(){
   const rows = state.previewRows.filter(r=>r.include);
   if(rows.length === 0){ showToast('No hay filas seleccionadas'); return; }
+  const missingCard = rows.filter(r=>!r.card);
+  if(missingCard.length > 0){
+    showToast(`Falta elegir tarjeta en ${missingCard.length} fila(s) — usa "Aplicar tarjeta a todas las filas" o elige una por una`);
+    return;
+  }
 
   // Crear tarjetas pendientes que realmente se vayan a usar, justo ahora — no antes.
   const usedPendingIds = new Set(rows.map(r=>r.card));
@@ -891,10 +893,12 @@ async function confirmPreviewImport(){
     state.cards.push(data);
   }
 
+  const batchId = crypto.randomUUID(); // permite deshacer este import completo después, si algo salió mal
   const inserts = rows.map(r => ({
     fecha: r.fecha, descripcion: r.descripcion, monto: r.monto,
     tarjeta_id: idMap[r.card] || r.card, categoria_id: r.category || null,
     cuota_actual: r.cuotaActual || null, cuota_total: r.cuotaTotal || null,
+    import_batch_id: batchId,
   }));
   const { error } = await sb.from('movimientos').insert(inserts);
   if(error){ showToast('Error: '+error.message); return; }
@@ -904,9 +908,37 @@ async function confirmPreviewImport(){
   state.previewRows = [];
   state.previewBank = null;
   state.pendingNewCards = [];
+  state.lastImportBatch = { id: batchId, count: rows.length };
   await loadAll();
   renderMonthStrip();
   renderImport();
+}
+
+// Borra de un jalón todos los movimientos del último lote importado (por
+// import_batch_id) — para cuando algo salió mal (tarjeta equivocada, PDF
+// repetido, etc.) y no quieres andar borrando fila por fila.
+async function undoLastImport(){
+  let batch = state.lastImportBatch;
+  if(!batch){
+    // No hay lote en memoria (ej. recargaste la página) — buscar el más reciente en la BD.
+    const { data, error } = await sb.from('movimientos')
+      .select('import_batch_id, created_at')
+      .not('import_batch_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if(error){ showToast('Error: '+error.message); return; }
+    if(!data || data.length === 0){ showToast('No hay ninguna importación reciente para deshacer'); return; }
+    const { count } = await sb.from('movimientos').select('id', { count: 'exact', head: true }).eq('import_batch_id', data[0].import_batch_id);
+    batch = { id: data[0].import_batch_id, count: count || 0 };
+  }
+  if(!confirm(`¿Borrar los ${batch.count} movimiento(s) de la última importación? Esto no se puede deshacer.`)) return;
+  const { error } = await sb.from('movimientos').delete().eq('import_batch_id', batch.id);
+  if(error){ showToast('Error: '+error.message); return; }
+  showToast(`${batch.count} movimiento(s) borrado(s)`);
+  state.lastImportBatch = null;
+  await loadAll();
+  renderMonthStrip();
+  renderAll();
 }
 
 /* ---------- Month strip ---------- */
@@ -1189,6 +1221,7 @@ function renderImport(){
   const otroCat = state.categories.find(c=>c.nombre==='Otro');
   const otroId = otroCat ? otroCat.id : null;
   const needsReview = r => !r.category || r.category === otroId;
+  const needsCard = r => !r.card;
   if(state.previewSortDir === undefined) state.previewSortDir = null; // null = orden en que vino del PDF/CSV
   const sortedRows = state.previewSortDir
     ? [...state.previewRows].sort((a,b) =>
@@ -1203,7 +1236,7 @@ function renderImport(){
     <div class="card">
       <div class="flex-between">
         <p class="card-title" style="margin:0">Revisa antes de importar <span class="bank-badge">${state.previewBank}</span></p>
-        <span class="small-muted">${state.previewRows.filter(r=>r.include).length} de ${state.previewRows.length} seleccionados · <strong>${fmtMoney(state.previewRows.filter(r=>r.include).reduce((s,r)=>s+(Number(r.monto)||0),0))}</strong>${state.previewRows.filter(needsReview).length ? ` · <span style="color:var(--alert)">${state.previewRows.filter(needsReview).length} sin categoría clara (Otro)</span>` : ''}</span>
+        <span class="small-muted">${state.previewRows.filter(r=>r.include).length} de ${state.previewRows.length} seleccionados · <strong>${fmtMoney(state.previewRows.filter(r=>r.include).reduce((s,r)=>s+(Number(r.monto)||0),0))}</strong>${state.previewRows.filter(needsCard).length ? ` · <span style="color:var(--alert)">${state.previewRows.filter(needsCard).length} sin tarjeta</span>` : ''}${state.previewRows.filter(needsReview).length ? ` · <span style="color:var(--alert)">${state.previewRows.filter(needsReview).length} sin categoría clara (Otro)</span>` : ''}</span>
       </div>
       <p class="hint">El parser de PDF es beta — revisa montos y fechas antes de confirmar. Desmarca lo que no quieras importar.</p>
       <div class="form-grid" style="margin-bottom:12px">
@@ -1224,12 +1257,12 @@ function renderImport(){
         <thead><tr><th></th><th id="previewSortDate" style="cursor:pointer;user-select:none" title="${sortTitle}">Fecha ${sortArrow}</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th><th></th></tr></thead>
         <tbody>
           ${sortedRows.map(r=>`
-            <tr class="${r.include?'':'excl'} ${needsReview(r)?'no-cat':''}" data-pid="${r.id}">
+            <tr class="${r.include?'':'excl'} ${(needsReview(r)||needsCard(r))?'no-cat':''}" data-pid="${r.id}">
               <td><input type="checkbox" data-pchk="${r.id}" ${r.include?'checked':''}></td>
               <td><input type="date" data-pfield="fecha" data-pid2="${r.id}" value="${r.fecha}" style="width:130px"></td>
               <td><input type="text" data-pfield="descripcion" data-pid2="${r.id}" value="${r.descripcion.replace(/"/g,'&quot;')}">${r.isDup?' <span class="bank-badge" style="background:var(--alert-soft);color:var(--alert)">posible duplicado</span>':''}</td>
               <td><input type="number" step="0.01" data-pfield="monto" data-pid2="${r.id}" value="${r.monto}" style="width:90px"></td>
-              <td><select data-pfield="card" data-pid2="${r.id}">${[...state.cards, ...state.pendingNewCards].map(c=>`<option value="${c.id}" ${c.id===r.card?'selected':''}>${c.nombre}${state.pendingNewCards.find(p=>p.id===c.id)?' (nueva)':''}</option>`).join('')}</select></td>
+              <td><select data-pfield="card" data-pid2="${r.id}" style="${needsCard(r)?'border-color:var(--alert);color:var(--alert)':''}"><option value="" ${!r.card?'selected':''}>— elegir —</option>${[...state.cards, ...state.pendingNewCards].map(c=>`<option value="${c.id}" ${c.id===r.card?'selected':''}>${c.nombre}${state.pendingNewCards.find(p=>p.id===c.id)?' (nueva)':''}</option>`).join('')}</select></td>
               <td><select data-pfield="category" data-pid2="${r.id}" style="${needsReview(r)?'border-color:var(--alert);color:var(--alert)':''}"><option value="" ${!r.category?'selected':''}>— Sin categoría —</option>${state.categories.map(c=>`<option value="${c.id}" ${c.id===r.category?'selected':''}>${c.nombre}</option>`).join('')}</select></td>
               <td style="white-space:nowrap">
                 <input type="number" min="1" data-pfield="cuotaActual" data-pid2="${r.id}" value="${r.cuotaActual||''}" placeholder="ej.9" style="width:52px;display:inline-block">
@@ -1282,8 +1315,14 @@ function renderImport(){
         <button class="primary" id="parseBtn">Importar líneas</button>
         <span class="small-muted" id="importStatus"></span>
       </div>
+    </div>
+    <div class="card">
+      <p class="card-title">¿Te equivocaste?</p>
+      <p class="hint">Borra de un jalón todos los movimientos de la última importación confirmada (PDF, IA o CSV) — útil si quedaron con la tarjeta equivocada, se te coló un PDF repetido, o cualquier otro error. No afecta movimientos agregados a mano uno por uno.</p>
+      <button class="ghost" id="undoImportBtn" style="color:var(--alert);border-color:var(--alert)">Deshacer última importación</button>
     </div>`;
 
+  document.getElementById('undoImportBtn').addEventListener('click', undoLastImport);
   document.getElementById('pdfFileInput').addEventListener('change', (e)=>{
     if(e.target.files[0]) handlePdfUpload(e.target.files[0]);
   });
@@ -1336,7 +1375,7 @@ function renderImport(){
         if(field === 'monto') row[field] = parseFloat(inp.value);
         else if(field === 'cuotaActual' || field === 'cuotaTotal') row[field] = inp.value ? parseInt(inp.value,10) : null;
         else row[field] = inp.value;
-        if(field === 'category') renderImport();
+        if(field === 'category' || field === 'card') renderImport();
       });
     });
     document.getElementById('confirmPreviewBtn').addEventListener('click', confirmPreviewImport);
@@ -1363,7 +1402,7 @@ function renderImport(){
       if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || !desc || isNaN(amount)){ skipped++; continue; }
       const cuotaActual = cuotaActualStr ? parseInt(cuotaActualStr,10) : null;
       const cuotaTotal = cuotaTotalStr ? parseInt(cuotaTotalStr,10) : null;
-      let card = state.cards.find(c=>c.nombre === (cardName || state.cards[0]?.nombre));
+      let card = cardName ? state.cards.find(c=>c.nombre === cardName) : null;
       if(cardName && !card){
         const { data } = await sb.from('tarjetas').insert({ nombre: cardName }).select().single();
         card = data; state.cards.push(card);
@@ -1375,7 +1414,7 @@ function renderImport(){
       rows.push({
         id: uid(), include: !isDup, isDup,
         fecha: date, descripcion: desc, monto: amount,
-        card: card ? card.id : (state.cards[0] ? state.cards[0].id : null),
+        card: card ? card.id : null,
         category: noCategory ? null : guessCategoryId(desc),
         cuotaActual, cuotaTotal,
       });

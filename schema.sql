@@ -38,6 +38,7 @@ create table gastos.movimientos (
   categoria_id uuid references gastos.categorias(id) on delete set null,
   cuota_actual int,  -- ej. 9  → null = pago neto (no es MSI)
   cuota_total int,   -- ej. 12 → null = pago neto (no es MSI)
+  import_batch_id uuid, -- agrupa los movimientos de una misma confirmación de import, para poder deshacerla de un jalón. null = agregado a mano.
   created_at timestamptz not null default now()
 );
 
