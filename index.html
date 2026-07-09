@@ -959,6 +959,11 @@ function renderTransactions(){
     ? (state.txFrom || state.txTo ? `${state.txFrom||'…'} → ${state.txTo||'…'}` : 'Todo el historial')
     : monthLabel(state.currentMonth);
 
+  const sumGasto = monthTx.filter(t=>t.catTipo==='gasto').reduce((s,t)=>s+Number(t.monto),0);
+  const sumIngreso = monthTx.filter(t=>t.catTipo==='ingreso').reduce((s,t)=>s+Number(t.monto),0);
+  const sumNeutral = monthTx.filter(t=>t.catTipo==='neutral').reduce((s,t)=>s+Number(t.monto),0);
+  const sumUncat = monthTx.filter(t=>!t.catName).length;
+
   el.innerHTML = `
     <div class="card">
       <p class="card-title">Agregar movimiento manual</p>
@@ -978,6 +983,13 @@ function renderTransactions(){
       <div class="flex-between">
         <p class="card-title" style="margin:0">Movimientos · ${rangeLabel}</p>
         <span class="small-muted">${monthTx.length} registros</span>
+      </div>
+      <div class="summary-row" style="margin-bottom:12px">
+        <div class="card stat"><div class="num spend">${fmtMoney(sumGasto)}</div><div class="label">Gasto en este período</div></div>
+        ${sumIngreso>0 ? `<div class="card stat"><div class="num" style="color:var(--accent)">${fmtMoney(sumIngreso)}</div><div class="label">Ingreso</div></div>
+        <div class="card stat"><div class="num">${fmtMoney(sumIngreso-sumGasto)}</div><div class="label">Balance neto</div></div>` : ''}
+        ${sumNeutral!==0 ? `<div class="card stat"><div class="num" style="color:var(--muted)">${fmtMoney(sumNeutral)}</div><div class="label">No cuenta (traspasos, etc.)</div></div>` : ''}
+        ${sumUncat>0 ? `<div class="card stat"><div class="num" style="color:var(--alert)">${sumUncat}</div><div class="label">Sin categorizar (no incluidos arriba)</div></div>` : ''}
       </div>
       <div class="form-grid" style="margin-bottom:6px">
         <div><label>Ver</label>
