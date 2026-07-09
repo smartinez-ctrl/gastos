@@ -1149,6 +1149,11 @@ function renderImport(){
   const otroCat = state.categories.find(c=>c.nombre==='Otro');
   const otroId = otroCat ? otroCat.id : null;
   const needsReview = r => !r.category || r.category === otroId;
+  if(!state.previewSortDir) state.previewSortDir = 'asc';
+  const sortedRows = [...state.previewRows].sort((a,b) =>
+    state.previewSortDir === 'asc' ? a.fecha.localeCompare(b.fecha) : b.fecha.localeCompare(a.fecha)
+  );
+  const sortArrow = state.previewSortDir === 'asc' ? '▲' : '▼';
 
   const previewSection = state.previewRows.length ? `
     <div class="card">
@@ -1172,9 +1177,9 @@ function renderImport(){
         </div>
       </div>
       <table class="preview-table">
-        <thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th><th></th></tr></thead>
+        <thead><tr><th></th><th id="previewSortDate" style="cursor:pointer;user-select:none" title="Ordenar por fecha">Fecha ${sortArrow}</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th><th></th></tr></thead>
         <tbody>
-          ${state.previewRows.map(r=>`
+          ${sortedRows.map(r=>`
             <tr class="${r.include?'':'excl'} ${needsReview(r)?'no-cat':''}" data-pid="${r.id}">
               <td><input type="checkbox" data-pchk="${r.id}" ${r.include?'checked':''}></td>
               <td><input type="date" data-pfield="fecha" data-pid2="${r.id}" value="${r.fecha}" style="width:130px"></td>
@@ -1254,6 +1259,11 @@ function renderImport(){
         row.include = chk.checked;
         renderImport();
       });
+    });
+    const sortDateBtn = document.getElementById('previewSortDate');
+    if(sortDateBtn) sortDateBtn.addEventListener('click', ()=>{
+      state.previewSortDir = state.previewSortDir === 'asc' ? 'desc' : 'asc';
+      renderImport();
     });
     const bulkCardSel = document.getElementById('bulkCardSel');
     if(bulkCardSel) bulkCardSel.addEventListener('change', ()=>{
