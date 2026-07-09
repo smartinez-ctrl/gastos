@@ -769,6 +769,7 @@ async function handlePdfUpload(file){
       `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`
     ));
 
+    state.previewSortDir = null; // cada import nuevo empieza en orden del PDF/CSV
     state.previewRows = parsed.map(p => {
       const key = `${p.fecha}|${Math.round(p.monto*100)}|${p.descripcion.toLowerCase().trim()}`;
       const isDup = existingKeys.has(key);
@@ -836,6 +837,7 @@ async function handleAiPdfExtract(file){
     const existingKeys = new Set(state.transactions.map(t =>
       `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`
     ));
+    state.previewSortDir = null; // cada import nuevo empieza en orden del PDF/CSV
     state.previewRows = parsed.map(p => {
       const key = `${p.fecha}|${Math.round(Number(p.monto)*100)}|${String(p.descripcion).toLowerCase().trim()}`;
       const isDup = existingKeys.has(key);
@@ -1168,11 +1170,15 @@ function renderImport(){
   const otroCat = state.categories.find(c=>c.nombre==='Otro');
   const otroId = otroCat ? otroCat.id : null;
   const needsReview = r => !r.category || r.category === otroId;
-  if(!state.previewSortDir) state.previewSortDir = 'asc';
-  const sortedRows = [...state.previewRows].sort((a,b) =>
-    state.previewSortDir === 'asc' ? a.fecha.localeCompare(b.fecha) : b.fecha.localeCompare(a.fecha)
-  );
-  const sortArrow = state.previewSortDir === 'asc' ? '▲' : '▼';
+  if(state.previewSortDir === undefined) state.previewSortDir = null; // null = orden en que vino del PDF/CSV
+  const sortedRows = state.previewSortDir
+    ? [...state.previewRows].sort((a,b) =>
+        state.previewSortDir === 'asc' ? a.fecha.localeCompare(b.fecha) : b.fecha.localeCompare(a.fecha))
+    : state.previewRows;
+  const sortArrow = state.previewSortDir === 'asc' ? '▲' : state.previewSortDir === 'desc' ? '▼' : '↕';
+  const sortTitle = state.previewSortDir === 'asc' ? 'Ordenado ascendente — clic para descendente'
+    : state.previewSortDir === 'desc' ? 'Ordenado descendente — clic para volver al orden del PDF'
+    : 'Orden tal como viene en el PDF/CSV — clic para ordenar por fecha';
 
   const previewSection = state.previewRows.length ? `
     <div class="card">
@@ -1196,7 +1202,7 @@ function renderImport(){
         </div>
       </div>
       <table class="preview-table">
-        <thead><tr><th></th><th id="previewSortDate" style="cursor:pointer;user-select:none" title="Ordenar por fecha">Fecha ${sortArrow}</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th><th></th></tr></thead>
+        <thead><tr><th></th><th id="previewSortDate" style="cursor:pointer;user-select:none" title="${sortTitle}">Fecha ${sortArrow}</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th><th></th></tr></thead>
         <tbody>
           ${sortedRows.map(r=>`
             <tr class="${r.include?'':'excl'} ${needsReview(r)?'no-cat':''}" data-pid="${r.id}">
@@ -1281,7 +1287,7 @@ function renderImport(){
     });
     const sortDateBtn = document.getElementById('previewSortDate');
     if(sortDateBtn) sortDateBtn.addEventListener('click', ()=>{
-      state.previewSortDir = state.previewSortDir === 'asc' ? 'desc' : 'asc';
+      state.previewSortDir = state.previewSortDir === null ? 'asc' : state.previewSortDir === 'asc' ? 'desc' : null;
       renderImport();
     });
     const bulkCardSel = document.getElementById('bulkCardSel');
@@ -1359,6 +1365,7 @@ function renderImport(){
       document.getElementById('importStatus').textContent = `Nada que revisar — ${skipped} línea(s) omitida(s) por formato inválido.`;
       return;
     }
+    state.previewSortDir = null; // cada import nuevo empieza en orden del PDF/CSV
     state.previewRows = rows;
     state.previewBank = 'CSV manual';
     state.pendingNewCards = [];
