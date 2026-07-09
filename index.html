@@ -872,7 +872,7 @@ async function handleAiPdfExtract(file){
       };
     });
     const dupCount = state.previewRows.filter(r=>r.isDup).length;
-    showToast(`IA leyó ${parsed.length} movimiento(s) — selecciona la tarjeta antes de importar${dupCount?`, ${dupCount} posible(s) duplicado(s)`:''}`);
+    showToast(`IA leyó ${parsed.length} movimiento(s) — selecciona la tarjeta antes de importar${dupCount?`, ${dupCount} posible(s) duplicado(s)`:''}` + (data.truncated ? ' ⚠️ la respuesta se cortó, puede faltar el final del estado de cuenta — revisa' : ''));
     state.previewStatus = '';
     renderImport();
   }catch(err){

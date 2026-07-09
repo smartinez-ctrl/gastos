@@ -65,7 +65,7 @@ module.exports = async (req, res) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        max_tokens: 16000,
+        max_tokens: 24000,
         messages: [{ role: 'user', content }],
       }),
     });
@@ -81,18 +81,34 @@ module.exports = async (req, res) => {
     const cleaned = raw.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
 
     let rows;
+    let truncated = false;
     try {
       rows = JSON.parse(cleaned);
     } catch (e) {
-      res.status(500).json({ error: 'No se pudo interpretar la respuesta del modelo como JSON', raw: cleaned.slice(0, 2000) });
-      return;
+      // La respuesta puede haberse cortado a medias (estado de cuenta muy largo).
+      // En vez de tirar todo, se rescatan los objetos que sí quedaron completos:
+      // se corta el texto en el último "}" y se cierra el array ahí.
+      const lastBrace = cleaned.lastIndexOf('}');
+      if (lastBrace !== -1) {
+        const repaired = cleaned.slice(0, lastBrace + 1) + ']';
+        try {
+          rows = JSON.parse(repaired);
+          truncated = true;
+        } catch (e2) {
+          res.status(500).json({ error: 'No se pudo interpretar la respuesta del modelo como JSON (ni siquiera recortándola)', raw: cleaned });
+          return;
+        }
+      } else {
+        res.status(500).json({ error: 'No se pudo interpretar la respuesta del modelo como JSON', raw: cleaned });
+        return;
+      }
     }
     if (!Array.isArray(rows)) {
-      res.status(500).json({ error: 'La respuesta del modelo no fue un array', raw: cleaned.slice(0, 2000) });
+      res.status(500).json({ error: 'La respuesta del modelo no fue un array', raw: cleaned });
       return;
     }
 
-    res.status(200).json({ rows });
+    res.status(200).json({ rows, truncated });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Error inesperado' });
   }
