@@ -1110,7 +1110,7 @@ function renderImport(){
       </div>
       <p class="hint">El parser de PDF es beta — revisa montos y fechas antes de confirmar. Desmarca lo que no quieras importar.</p>
       <table class="preview-table">
-        <thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th></tr></thead>
+        <thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Tarjeta</th><th>Categoría</th><th>Cuota (MSI)</th><th></th></tr></thead>
         <tbody>
           ${state.previewRows.map(r=>`
             <tr class="${r.include?'':'excl'} ${needsReview(r)?'no-cat':''}" data-pid="${r.id}">
@@ -1125,9 +1125,11 @@ function renderImport(){
                 /
                 <input type="number" min="1" data-pfield="cuotaTotal" data-pid2="${r.id}" value="${r.cuotaTotal||''}" placeholder="ej.12" style="width:52px;display:inline-block">
               </td>
+              <td><button data-prm="${r.id}" title="Quitar de la lista" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px">✕</button></td>
             </tr>`).join('')}
         </tbody>
       </table>
+      <p class="small-muted" style="margin-top:6px">El checkbox desmarca sin quitar la fila (útil si dudas). El ✕ la quita por completo de esta lista.</p>
       <div style="margin-top:12px;display:flex;gap:10px">
         <button class="primary" id="confirmPreviewBtn">Importar seleccionados</button>
         <button class="ghost" id="cancelPreviewBtn">Cancelar</button>
@@ -1188,6 +1190,12 @@ function renderImport(){
       chk.addEventListener('change', ()=>{
         const row = state.previewRows.find(r=>r.id===chk.dataset.pchk);
         row.include = chk.checked;
+        renderImport();
+      });
+    });
+    el.querySelectorAll('[data-prm]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        state.previewRows = state.previewRows.filter(r=>r.id!==btn.dataset.prm);
         renderImport();
       });
     });
