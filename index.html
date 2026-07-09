@@ -580,11 +580,23 @@ function parseAmexText(rawText){
 
 function detectAmexCardName(rawText){
   // Se distingue por número de cuenta, no por nivel de tarjeta (Gold/Platinum
-  // pueden ser la misma cuenta con cambio de categoría). Si tienes más de una
-  // cuenta Amex real, cada una queda separada — renómbralas en Ajustes como
-  // "Amex Crédito" / "Amex Servicios" o lo que corresponda.
-  const acctMatch = rawText.match(/Número de Cuenta\s*([\d-]{8,20})/i);
-  const last4 = acctMatch ? acctMatch[1].replace(/\D/g,'').slice(-4) : null;
+  // pueden ser la misma cuenta con cambio de categoría).
+  // ":?" tolera tanto "Número de Cuenta 3766-..." como "Número de Cuenta: 3766-..."
+  // — el documento repite este dato en varias secciones y no siempre usa el
+  // mismo formato; si el regex no toleraba los dos puntos, a veces fallaba en
+  // encontrar el número y creaba una tarjeta genérica "Amex" nueva cada vez.
+  const acctMatch = rawText.match(/Número de Cuenta:?\s*([\d-]{8,20})/i);
+  const digitsOnly = acctMatch ? acctMatch[1].replace(/\D/g,'') : null;
+  const last4 = digitsOnly ? digitsOnly.slice(-4) : null;
+  const last5 = digitsOnly ? digitsOnly.slice(-5) : null;
+  // Cuentas ya identificadas por el usuario — nombre fijo en vez del genérico
+  // "Amex …XXXX", para que el import encuentre siempre la misma tarjeta ya
+  // existente en vez de crear una nueva cada vez.
+  const KNOWN_AMEX_ACCOUNTS = {
+    '22005': 'Amex Credito',
+    '33000': 'Amex Platino',
+  };
+  if(last5 && KNOWN_AMEX_ACCOUNTS[last5]) return KNOWN_AMEX_ACCOUNTS[last5];
   return last4 ? `Amex …${last4}` : 'Amex';
 }
 
