@@ -754,7 +754,7 @@ async function handlePdfUpload(file){
 // falta pegar el PDF en el chat — el propio sistema lo procesa.
 async function handleAiPdfExtract(file){
   state.previewDebugText = state.previewDebugText || null; // conserva el debug si ya se seteó antes de llamar
-  state.previewStatus = 'Banco no reconocido por el parser rápido — leyendo con IA (puede tardar 15-30s)...';
+  state.previewStatus = 'Este PDF no tiene capa de texto o es de un banco sin parser rápido — intentando leerlo con IA (puede tardar 15-30s)...';
   renderImport();
   try{
     const pdfBase64 = await fileToBase64(file);
