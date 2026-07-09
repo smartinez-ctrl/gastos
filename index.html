@@ -743,14 +743,15 @@ async function handlePdfUpload(file){
     }
 
     // Detectar posibles duplicados contra lo que ya está importado (mismo día,
-    // monto, tarjeta y descripción) — pasa fácil al subir varios meses seguidos
-    // o si repites sin querer el mismo PDF.
+    // monto y descripción — sin importar la tarjeta, para no dejar pasar un
+    // reimport si cambiaste la tarjeta antes de confirmar) — pasa fácil al
+    // subir varios meses seguidos o si repites sin querer el mismo PDF.
     const existingKeys = new Set(state.transactions.map(t =>
-      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.cardName||'').toLowerCase()}|${(t.descripcion||'').toLowerCase().trim()}`
+      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`
     ));
 
     state.previewRows = parsed.map(p => {
-      const key = `${p.fecha}|${Math.round(p.monto*100)}|${detectedCardName.toLowerCase()}|${p.descripcion.toLowerCase().trim()}`;
+      const key = `${p.fecha}|${Math.round(p.monto*100)}|${p.descripcion.toLowerCase().trim()}`;
       const isDup = existingKeys.has(key);
       existingKeys.add(key); // para detectar también duplicados repetidos dentro del mismo PDF
       return {
@@ -814,10 +815,10 @@ async function handleAiPdfExtract(file){
     const defaultCardName = state.cards[0] ? state.cards[0].nombre : '';
     state.pendingNewCards = [];
     const existingKeys = new Set(state.transactions.map(t =>
-      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.cardName||'').toLowerCase()}|${(t.descripcion||'').toLowerCase().trim()}`
+      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`
     ));
     state.previewRows = parsed.map(p => {
-      const key = `${p.fecha}|${Math.round(Number(p.monto)*100)}|${defaultCardName.toLowerCase()}|${String(p.descripcion).toLowerCase().trim()}`;
+      const key = `${p.fecha}|${Math.round(Number(p.monto)*100)}|${String(p.descripcion).toLowerCase().trim()}`;
       const isDup = existingKeys.has(key);
       existingKeys.add(key);
       return {
@@ -1297,7 +1298,7 @@ function renderImport(){
     const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
     let skipped = 0, dupCount = 0;
     const existingKeys = new Set(state.transactions.map(t =>
-      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.cardName||'').toLowerCase()}|${(t.descripcion||'').toLowerCase().trim()}`
+      `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`
     ));
     const rows = [];
     for(const line of lines){
@@ -1313,7 +1314,7 @@ function renderImport(){
         const { data } = await sb.from('tarjetas').insert({ nombre: cardName }).select().single();
         card = data; state.cards.push(card);
       }
-      const key = `${date}|${Math.round(amount*100)}|${(card?card.nombre:'').toLowerCase()}|${desc.toLowerCase().trim()}`;
+      const key = `${date}|${Math.round(amount*100)}|${desc.toLowerCase().trim()}`;
       const isDup = existingKeys.has(key);
       if(isDup) dupCount++;
       existingKeys.add(key); // para detectar también duplicados repetidos dentro del mismo pegado
