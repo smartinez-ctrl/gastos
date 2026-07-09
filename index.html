@@ -940,11 +940,24 @@ function renderTransactions(){
   const el = document.getElementById('viewTransactions');
   if(!state.filterCard) state.filterCard = '';
   if(!state.filterCat) state.filterCat = '';
-  const monthTx = state.transactions
-    .filter(t=>monthKey(t.fecha)===state.currentMonth)
+  if(state.txRangeActive === undefined) state.txRangeActive = false;
+  if(!state.txFrom) state.txFrom = '';
+  if(!state.txTo) state.txTo = '';
+  if(!state.txSearch) state.txSearch = '';
+
+  let monthTx = state.txRangeActive
+    ? state.transactions.filter(t => (!state.txFrom || t.fecha >= state.txFrom) && (!state.txTo || t.fecha <= state.txTo))
+    : state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth);
+  monthTx = monthTx
     .filter(t=>!state.filterCard || t.tarjeta_id===state.filterCard)
     .filter(t=>!state.filterCat || t.categoria_id===state.filterCat)
+    .filter(t=>!state.txSearch || t.descripcion.toLowerCase().includes(state.txSearch.toLowerCase()))
     .sort((a,b)=> b.fecha.localeCompare(a.fecha));
+
+  const rangeLabel = state.txRangeActive
+    ? (state.txFrom || state.txTo ? `${state.txFrom||'…'} → ${state.txTo||'…'}` : 'Todo el historial')
+    : monthLabel(state.currentMonth);
+
   el.innerHTML = `
     <div class="card">
       <p class="card-title">Agregar movimiento manual</p>
@@ -962,15 +975,28 @@ function renderTransactions(){
     </div>
     <div class="card">
       <div class="flex-between">
-        <p class="card-title" style="margin:0">Movimientos · ${monthLabel(state.currentMonth)}</p>
+        <p class="card-title" style="margin:0">Movimientos · ${rangeLabel}</p>
         <span class="small-muted">${monthTx.length} registros</span>
+      </div>
+      <div class="form-grid" style="margin-bottom:6px">
+        <div><label>Ver</label>
+          <select id="txModeSel">
+            <option value="month" ${!state.txRangeActive?'selected':''}>Por mes (pestañas de arriba)</option>
+            <option value="range" ${state.txRangeActive?'selected':''}>Rango de fechas / todo el historial</option>
+          </select>
+        </div>
+        ${state.txRangeActive ? `
+        <div><label>Desde</label><input type="date" id="txFromInput" value="${state.txFrom}"></div>
+        <div><label>Hasta</label><input type="date" id="txToInput" value="${state.txTo}"></div>
+        <div style="align-self:end"><button class="ghost" id="txAllHistoryBtn">Todo el historial</button></div>` : ''}
+        <div><label>Buscar descripción</label><input type="text" id="txSearchInput" value="${state.txSearch}" placeholder="ej. Jesus del Monte"></div>
       </div>
       <div class="form-grid" style="margin-bottom:12px">
         <div><label>Filtrar por tarjeta</label><select id="filterCardSel"><option value="">Todas</option>${state.cards.map(c=>`<option value="${c.id}" ${c.id===state.filterCard?'selected':''}>${c.nombre}</option>`).join('')}</select></div>
         <div><label>Filtrar por categoría</label><select id="filterCatSel"><option value="">Todas</option>${state.categories.map(c=>`<option value="${c.id}" ${c.id===state.filterCat?'selected':''}>${c.nombre}</option>`).join('')}</select></div>
         ${(state.filterCard || state.filterCat) ? `<div style="align-self:end"><button class="ghost" id="clearFilterBtn">Quitar filtros</button></div>` : ''}
       </div>
-      ${monthTx.length===0 ? `<div class="empty-state">Sin movimientos${(state.filterCard||state.filterCat)?' con este filtro':' este mes'}.</div>` : `
+      ${monthTx.length===0 ? `<div class="empty-state">Sin movimientos con este filtro.</div>` : `
       <table>
         <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead>
         <tbody>
@@ -996,6 +1022,23 @@ function renderTransactions(){
       </table>`}
     </div>`;
 
+  document.getElementById('txModeSel').addEventListener('change', (e)=>{
+    state.txRangeActive = e.target.value === 'range';
+    renderTransactions();
+  });
+  const fromInput = document.getElementById('txFromInput');
+  if(fromInput) fromInput.addEventListener('change', (e)=>{ state.txFrom = e.target.value; renderTransactions(); });
+  const toInput = document.getElementById('txToInput');
+  if(toInput) toInput.addEventListener('change', (e)=>{ state.txTo = e.target.value; renderTransactions(); });
+  const allHistoryBtn = document.getElementById('txAllHistoryBtn');
+  if(allHistoryBtn) allHistoryBtn.addEventListener('click', ()=>{ state.txFrom=''; state.txTo=''; renderTransactions(); });
+  document.getElementById('txSearchInput').addEventListener('input', (e)=>{
+    state.txSearch = e.target.value;
+    const cursorPos = e.target.selectionStart;
+    renderTransactions();
+    const newInput = document.getElementById('txSearchInput');
+    if(newInput){ newInput.focus(); newInput.setSelectionRange(cursorPos, cursorPos); }
+  });
   document.getElementById('filterCardSel').addEventListener('change', (e)=>{ state.filterCard = e.target.value; renderTransactions(); });
   document.getElementById('filterCatSel').addEventListener('change', (e)=>{ state.filterCat = e.target.value; renderTransactions(); });
   const clearBtn = document.getElementById('clearFilterBtn');
