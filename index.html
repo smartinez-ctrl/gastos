@@ -437,6 +437,7 @@ function parseAmexText(rawText){
   windowText = windowText
     .replace(/Total de las transacciones en \$ de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
     .replace(/Total de Cargos en Moneda Extranjera de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total de Transacciones en Moneda Extranjera de[\s\S]*?[\d,]+\.\d{2}/gi, ' ')
     .replace(/Total de Cargos para[^\n]*?(?=\d{1,2}\s+de\s+[A-Za-zé]+)/gi, ' ')
     .replace(/Total de Meses sin Intereses[\s\S]{0,200}?[\d,]+\.\d{2}/gi, ' ');
 
@@ -473,7 +474,7 @@ function parseAmexText(rawText){
       // Quitar el sub-monto en moneda extranjera (Dólar, Corona Sueca, Euro, etc.)
       // — su posición respecto al monto en MXN varía entre estados de cuenta,
       // así que se descarta antes de decidir cuál número es el monto real.
-      const segmentForAmount = segment.replace(/(Dólar U\.S\.A\.?|Corona Sueca|Euro|Libra Esterlina)\.?\s*[\d,]+[.,]\d{2}/gi, ' ');
+      const segmentForAmount = segment.replace(/(Dólar U\.S\.A\.?|Corona Sueca|Euro|Libra Esterlina)\.?\s*[\d,]+[.,]\d{2}\s*TC:?\s*[\d,]+\.\d+/gi, ' ');
       const amounts = [...segmentForAmount.matchAll(/[\d,]+\.\d{2}/g)];
       if(amounts.length === 0) continue;
       const last = amounts[amounts.length-1];
@@ -495,7 +496,7 @@ function parseAmexText(rawText){
       let desc = segment.slice(0, last.index)
         .replace(/RFC\S+/gi, ' ')
         .replace(/\/?REF\S+/gi, ' ')
-        .replace(/Dólar U\.S\.A\.?\s*[\d,]+\.\d{2}/gi, ' ')
+        .replace(/Dólar U\.S\.A\.?\s*[\d,]+\.\d{2}\s*TC:?\s*[\d,]+\.\d+/gi, ' ')
         .replace(/CARGO\s+\d+\s+DE\s+\d+/gi, ' ')
         .replace(/\s{2,}/g, ' ')
         .trim()
