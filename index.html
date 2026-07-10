@@ -1571,9 +1571,11 @@ function renderAnalysis(){
     return;
   }
 
-  // Gasto total por mes (solo movimientos categorizados)
+  // Gasto total por mes (solo movimientos categorizados como GASTO — antes
+  // sumaba cualquier cosa con categoría, mezclando ingreso/ahorro/no cuenta
+  // como si todo fuera gasto, lo que inflaba muchísimo el número)
   const byMonth = {};
-  state.transactions.filter(t=>t.catName).forEach(t=>{
+  state.transactions.filter(t=>t.catTipo==='gasto').forEach(t=>{
     const mk = monthKey(t.fecha);
     byMonth[mk] = (byMonth[mk] || 0) + Number(t.monto);
   });
@@ -1603,8 +1605,8 @@ function renderAnalysis(){
   const months = allMonths(); // desc
   const curIdx = months.indexOf(state.currentMonth);
   const prevMonth = curIdx >= 0 && curIdx+1 < months.length ? months[curIdx+1] : null;
-  const curTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth && t.catName);
-  const prevTx = prevMonth ? state.transactions.filter(t=>monthKey(t.fecha)===prevMonth && t.catName) : [];
+  const curTx = state.transactions.filter(t=>monthKey(t.fecha)===state.currentMonth && t.catTipo==='gasto');
+  const prevTx = prevMonth ? state.transactions.filter(t=>monthKey(t.fecha)===prevMonth && t.catTipo==='gasto') : [];
   const curByCat = {}, prevByCat = {};
   curTx.forEach(t=> curByCat[t.catName] = (curByCat[t.catName]||0) + Number(t.monto));
   prevTx.forEach(t=> prevByCat[t.catName] = (prevByCat[t.catName]||0) + Number(t.monto));
