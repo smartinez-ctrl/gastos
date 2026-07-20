@@ -1631,23 +1631,22 @@ function renderAnalysis(){
     const customCatEntries = Object.entries(customByCat).sort((a,b)=>b[1]-a[1]);
     const maxCustomCat = customCatEntries.length ? customCatEntries[0][1] : 1;
 
-    // Gráfica de barras horizontales SVG, por categoría — cada barra es clickeable
-    const barH = 30, barGapY = 12, chartPadL = 150, chartPadR = 80, catChartW = 900;
-    const catChartH = customCatEntries.length * (barH + barGapY) + 10;
-    const catBars = customCatEntries.map(([name, amt], i) => {
-      const y = i * (barH + barGapY) + 6;
-      const w = (amt / maxCustomCat) * (catChartW - chartPadL - chartPadR);
+    // Desglose por categoría, mismo estilo que el Panel (cat-line + barra delgada),
+    // pero clickeable para el drill-down — en vez de un componente de gráfica aparte.
+    const catRows = customCatEntries.map(([name, amt]) => {
       const isSelected = state.customDrilldownCat === name;
-      const nameAttr = name.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       return `
-        <g onclick="handleCatBarClick('${nameAttr.replace(/'/g,"\\'")}')" style="cursor:pointer">
-          <rect x="0" y="${y}" width="${catChartW}" height="${barH}" fill="transparent" pointer-events="all"></rect>
-          <text x="0" y="${y+barH/2+4}" font-family="Inter" font-size="13" fill="${isSelected?'var(--ink)':'var(--ink-soft)'}" font-weight="${isSelected?600:400}" pointer-events="none">${name}</text>
-          <rect x="${chartPadL}" y="${y+4}" width="${Math.max(w,2).toFixed(1)}" height="${barH-8}" rx="3"
-                fill="${catColor(name)}" opacity="${isSelected?1:0.85}" stroke="${isSelected?'var(--ink)':'none'}" stroke-width="1.5" pointer-events="none"></rect>
-          <text x="${chartPadL + Math.max(w,2) + 8}" y="${y+barH/2+4}" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-soft)" pointer-events="none">${fmtMoney(amt)}</text>
-        </g>`;
+        <div class="cat-line" style="cursor:pointer;${isSelected?'background:var(--accent-soft);border-radius:3px;padding-left:6px;padding-right:6px;margin:0 -6px':''}"
+             onclick="handleCatBarClick('${name.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"\\'")}')">
+          <span class="cat-dot" style="background:${catColor(name)}"></span>
+          <span class="cat-name" style="${isSelected?'font-weight:600':''}">${name}</span>
+          <span class="cat-leader"></span>
+          <span class="cat-amt">${fmtMoney(amt)}</span>
+        </div>`;
     }).join('');
+    const catBarsBg = customCatEntries.map(([name, amt]) =>
+      `<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCustomCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`
+    ).join('');
 
     // Drill-down: movimientos de la categoría seleccionada, dentro del rango
     let drilldownSection = '';
@@ -1677,8 +1676,9 @@ function renderAnalysis(){
       </div>
       ${customCatEntries.length ? `
       <div class="card">
-        <p class="card-title">Por categoría <span class="small-muted">(clic en una barra para ver sus movimientos)</span></p>
-        <svg viewBox="0 0 ${catChartW} ${catChartH}" style="width:100%;height:auto;display:block">${catBars}</svg>
+        <p class="card-title">Por categoría <span class="small-muted">(clic en una para ver sus movimientos)</span></p>
+        ${catRows}
+        <div style="margin-top:10px">${catBarsBg}</div>
       </div>
       ${drilldownSection}
       <div class="card">
