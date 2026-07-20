@@ -1640,7 +1640,7 @@ function renderAnalysis(){
       const isSelected = state.customDrilldownCat === name;
       return `
         <g data-catbar="${name.replace(/"/g,'&quot;')}" style="cursor:pointer">
-          <rect x="0" y="${y}" width="${catChartW}" height="${barH}" fill="transparent"></rect>
+          <rect x="0" y="${y}" width="${catChartW}" height="${barH}" fill="transparent" pointer-events="all"></rect>
           <text x="0" y="${y+barH/2+4}" font-family="Inter" font-size="12" fill="${isSelected?'var(--ink)':'var(--ink-soft)'}" font-weight="${isSelected?600:400}">${name}</text>
           <rect x="${chartPadL}" y="${y+4}" width="${Math.max(w,2).toFixed(1)}" height="${barH-8}" rx="3"
                 fill="${catColor(name)}" opacity="${isSelected?1:0.85}" stroke="${isSelected?'var(--ink)':'none'}" stroke-width="1.5"></rect>
@@ -1677,7 +1677,7 @@ function renderAnalysis(){
       ${customCatEntries.length ? `
       <div class="card">
         <p class="card-title">Por categoría <span class="small-muted">(clic en una barra para ver sus movimientos)</span></p>
-        <svg viewBox="0 0 ${catChartW} ${catChartH}" style="width:100%;height:auto">${catBars}</svg>
+        <svg viewBox="0 0 ${catChartW} ${catChartH}" style="width:100%;max-width:${catChartW}px;height:auto;display:block">${catBars}</svg>
       </div>
       ${drilldownSection}
       <div class="card">
@@ -1707,7 +1707,7 @@ function renderAnalysis(){
     </div>
     <div class="card">
       <p class="card-title">Gasto mensual — últimos ${monthsAsc.length} meses con datos</p>
-      <svg viewBox="0 0 ${chartW} ${chartH}" style="width:100%;height:auto">
+      <svg viewBox="0 0 ${chartW} ${chartH}" style="width:100%;max-width:${chartW}px;height:auto;display:block">
         ${bars}
       </svg>
     </div>
