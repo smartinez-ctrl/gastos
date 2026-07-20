@@ -175,6 +175,7 @@ let state = {
   pendingNewCards: [],  // cards suggested from a PDF, not yet saved to the DB
   customFrom: '',       // rango personalizado en Análisis
   customTo: '',
+  customDrilldownCat: null, // categoría en la que se hizo click, para ver sus movimientos
 };
 
 if(window.pdfjsLib){
@@ -1629,6 +1630,45 @@ function renderAnalysis(){
     });
     const customCatEntries = Object.entries(customByCat).sort((a,b)=>b[1]-a[1]);
     const maxCustomCat = customCatEntries.length ? customCatEntries[0][1] : 1;
+
+    // Gráfica de barras horizontales SVG, por categoría — cada barra es clickeable
+    const barH = 26, barGapY = 10, chartPadL = 130, chartPadR = 70, catChartW = 640;
+    const catChartH = customCatEntries.length * (barH + barGapY) + 10;
+    const catBars = customCatEntries.map(([name, amt], i) => {
+      const y = i * (barH + barGapY) + 6;
+      const w = (amt / maxCustomCat) * (catChartW - chartPadL - chartPadR);
+      const isSelected = state.customDrilldownCat === name;
+      return `
+        <g data-catbar="${name.replace(/"/g,'&quot;')}" style="cursor:pointer">
+          <rect x="0" y="${y}" width="${catChartW}" height="${barH}" fill="transparent"></rect>
+          <text x="0" y="${y+barH/2+4}" font-family="Inter" font-size="12" fill="${isSelected?'var(--ink)':'var(--ink-soft)'}" font-weight="${isSelected?600:400}">${name}</text>
+          <rect x="${chartPadL}" y="${y+4}" width="${Math.max(w,2).toFixed(1)}" height="${barH-8}" rx="3"
+                fill="${catColor(name)}" opacity="${isSelected?1:0.85}" stroke="${isSelected?'var(--ink)':'none'}" stroke-width="1.5"></rect>
+          <text x="${chartPadL + Math.max(w,2) + 8}" y="${y+barH/2+4}" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-soft)">${fmtMoney(amt)}</text>
+        </g>`;
+    }).join('');
+
+    // Drill-down: movimientos de la categoría seleccionada, dentro del rango
+    let drilldownSection = '';
+    if(state.customDrilldownCat){
+      const drillTx = customTx.filter(t => t.catName === state.customDrilldownCat).sort((a,b)=> b.fecha.localeCompare(a.fecha));
+      drilldownSection = `
+        <div class="card">
+          <div class="flex-between">
+            <p class="card-title" style="margin:0">Movimientos — ${state.customDrilldownCat} <span class="small-muted">(${drillTx.length})</span></p>
+            <button class="ghost" id="closeDrilldown">Cerrar</button>
+          </div>
+          <table>
+            <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th style="text-align:right">Monto</th></tr></thead>
+            <tbody>
+              ${drillTx.map(t=>`
+                <tr><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
     customSection = `
       <div class="summary-row" style="margin-top:14px">
         <div class="card stat"><div class="num spend">${fmtMoney(customTotal)}</div><div class="label">Gasto total del periodo</div></div>
@@ -1636,10 +1676,10 @@ function renderAnalysis(){
       </div>
       ${customCatEntries.length ? `
       <div class="card">
-        <p class="card-title">Por categoría</p>
-        ${customCatEntries.map(([name,amt])=>`<div class="cat-line"><span class="cat-dot" style="background:${catColor(name)}"></span><span class="cat-name">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
-        <div style="margin-top:10px">${customCatEntries.map(([name,amt])=>`<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCustomCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`).join('')}</div>
+        <p class="card-title">Por categoría <span class="small-muted">(clic en una barra para ver sus movimientos)</span></p>
+        <svg viewBox="0 0 ${catChartW} ${catChartH}" style="width:100%;height:auto">${catBars}</svg>
       </div>
+      ${drilldownSection}
       <div class="card">
         <p class="card-title">Por tarjeta</p>
         ${Object.entries(customByCard).sort((a,b)=>b[1]-a[1]).map(([name,amt])=>`<div class="cat-line"><span class="card-pill" style="min-width:90px">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
@@ -1695,8 +1735,8 @@ function renderAnalysis(){
       </table>`}
     </div>`;
 
-  document.getElementById('customFrom').addEventListener('change', (e)=>{ state.customFrom = e.target.value; renderAnalysis(); });
-  document.getElementById('customTo').addEventListener('change', (e)=>{ state.customTo = e.target.value; renderAnalysis(); });
+  document.getElementById('customFrom').addEventListener('change', (e)=>{ state.customFrom = e.target.value; state.customDrilldownCat=null; renderAnalysis(); });
+  document.getElementById('customTo').addEventListener('change', (e)=>{ state.customTo = e.target.value; state.customDrilldownCat=null; renderAnalysis(); });
   document.getElementById('quickRange').addEventListener('change', (e)=>{
     const preset = e.target.value;
     if(!preset) return;
@@ -1717,7 +1757,16 @@ function renderAnalysis(){
     renderAnalysis();
   });
   const clearBtn = document.getElementById('clearCustomRange');
-  if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customFrom=''; state.customTo=''; renderAnalysis(); });
+  if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customFrom=''; state.customTo=''; state.customDrilldownCat=null; renderAnalysis(); });
+  el.querySelectorAll('[data-catbar]').forEach(g=>{
+    g.addEventListener('click', ()=>{
+      const cat = g.dataset.catbar;
+      state.customDrilldownCat = (state.customDrilldownCat === cat) ? null : cat;
+      renderAnalysis();
+    });
+  });
+  const closeDrill = document.getElementById('closeDrilldown');
+  if(closeDrill) closeDrill.addEventListener('click', ()=>{ state.customDrilldownCat = null; renderAnalysis(); });
 }
 
 /* ---------- View switching ---------- */
