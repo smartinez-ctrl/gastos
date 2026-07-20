@@ -1651,6 +1651,14 @@ function renderAnalysis(){
     <div class="card">
       <p class="card-title">Periodo personalizado</p>
       <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+        <div><label>Rango rápido</label>
+          <select id="quickRange">
+            <option value="">Personalizado</option>
+            <option value="this-month">Este mes</option>
+            <option value="last-month">Mes pasado</option>
+            <option value="this-year">Todo el año</option>
+          </select>
+        </div>
         <div><label>Desde</label><input type="date" id="customFrom" value="${state.customFrom}"></div>
         <div><label>Hasta</label><input type="date" id="customTo" value="${state.customTo}"></div>
         ${(state.customFrom || state.customTo) ? `<button class="ghost" id="clearCustomRange">Limpiar</button>` : ''}
@@ -1689,6 +1697,25 @@ function renderAnalysis(){
 
   document.getElementById('customFrom').addEventListener('change', (e)=>{ state.customFrom = e.target.value; renderAnalysis(); });
   document.getElementById('customTo').addEventListener('change', (e)=>{ state.customTo = e.target.value; renderAnalysis(); });
+  document.getElementById('quickRange').addEventListener('change', (e)=>{
+    const preset = e.target.value;
+    if(!preset) return;
+    const pad = n => String(n).padStart(2,'0');
+    const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth();
+    if(preset === 'this-month'){
+      state.customFrom = fmt(new Date(y, m, 1));
+      state.customTo = fmt(new Date(y, m+1, 0));
+    } else if(preset === 'last-month'){
+      state.customFrom = fmt(new Date(y, m-1, 1));
+      state.customTo = fmt(new Date(y, m, 0));
+    } else if(preset === 'this-year'){
+      state.customFrom = fmt(new Date(y, 0, 1));
+      state.customTo = fmt(new Date(y, 11, 31));
+    }
+    renderAnalysis();
+  });
   const clearBtn = document.getElementById('clearCustomRange');
   if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customFrom=''; state.customTo=''; renderAnalysis(); });
 }
