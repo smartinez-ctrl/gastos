@@ -1586,7 +1586,7 @@ function renderAnalysis(){
   const maxMonth = Math.max(...monthsAsc.map(m=>byMonth[m]), 1);
 
   // Gráfica de barras SVG — meses en X, gasto en Y
-  const chartW = 700, chartH = 220, padL = 10, padB = 34, barGap = 10;
+  const chartW = 900, chartH = 240, padL = 10, padB = 34, barGap = 10;
   const barW = monthsAsc.length ? (chartW - padL*2 - barGap*(monthsAsc.length-1)) / monthsAsc.length : 0;
   const bars = monthsAsc.map((m, i) => {
     const val = byMonth[m];
@@ -1632,19 +1632,20 @@ function renderAnalysis(){
     const maxCustomCat = customCatEntries.length ? customCatEntries[0][1] : 1;
 
     // Gráfica de barras horizontales SVG, por categoría — cada barra es clickeable
-    const barH = 26, barGapY = 10, chartPadL = 130, chartPadR = 70, catChartW = 640;
+    const barH = 30, barGapY = 12, chartPadL = 150, chartPadR = 80, catChartW = 900;
     const catChartH = customCatEntries.length * (barH + barGapY) + 10;
     const catBars = customCatEntries.map(([name, amt], i) => {
       const y = i * (barH + barGapY) + 6;
       const w = (amt / maxCustomCat) * (catChartW - chartPadL - chartPadR);
       const isSelected = state.customDrilldownCat === name;
+      const nameAttr = name.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       return `
-        <g data-catbar="${name.replace(/"/g,'&quot;')}" style="cursor:pointer">
+        <g onclick="handleCatBarClick('${nameAttr.replace(/'/g,"\\'")}')" style="cursor:pointer">
           <rect x="0" y="${y}" width="${catChartW}" height="${barH}" fill="transparent" pointer-events="all"></rect>
-          <text x="0" y="${y+barH/2+4}" font-family="Inter" font-size="12" fill="${isSelected?'var(--ink)':'var(--ink-soft)'}" font-weight="${isSelected?600:400}">${name}</text>
+          <text x="0" y="${y+barH/2+4}" font-family="Inter" font-size="13" fill="${isSelected?'var(--ink)':'var(--ink-soft)'}" font-weight="${isSelected?600:400}" pointer-events="none">${name}</text>
           <rect x="${chartPadL}" y="${y+4}" width="${Math.max(w,2).toFixed(1)}" height="${barH-8}" rx="3"
-                fill="${catColor(name)}" opacity="${isSelected?1:0.85}" stroke="${isSelected?'var(--ink)':'none'}" stroke-width="1.5"></rect>
-          <text x="${chartPadL + Math.max(w,2) + 8}" y="${y+barH/2+4}" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-soft)">${fmtMoney(amt)}</text>
+                fill="${catColor(name)}" opacity="${isSelected?1:0.85}" stroke="${isSelected?'var(--ink)':'none'}" stroke-width="1.5" pointer-events="none"></rect>
+          <text x="${chartPadL + Math.max(w,2) + 8}" y="${y+barH/2+4}" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-soft)" pointer-events="none">${fmtMoney(amt)}</text>
         </g>`;
     }).join('');
 
@@ -1677,7 +1678,7 @@ function renderAnalysis(){
       ${customCatEntries.length ? `
       <div class="card">
         <p class="card-title">Por categoría <span class="small-muted">(clic en una barra para ver sus movimientos)</span></p>
-        <svg viewBox="0 0 ${catChartW} ${catChartH}" style="width:100%;max-width:${catChartW}px;height:auto;display:block">${catBars}</svg>
+        <svg viewBox="0 0 ${catChartW} ${catChartH}" style="width:100%;height:auto;display:block">${catBars}</svg>
       </div>
       ${drilldownSection}
       <div class="card">
@@ -1707,7 +1708,7 @@ function renderAnalysis(){
     </div>
     <div class="card">
       <p class="card-title">Gasto mensual — últimos ${monthsAsc.length} meses con datos</p>
-      <svg viewBox="0 0 ${chartW} ${chartH}" style="width:100%;max-width:${chartW}px;height:auto;display:block">
+      <svg viewBox="0 0 ${chartW} ${chartH}" style="width:100%;height:auto;display:block">
         ${bars}
       </svg>
     </div>
@@ -1758,15 +1759,15 @@ function renderAnalysis(){
   });
   const clearBtn = document.getElementById('clearCustomRange');
   if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customFrom=''; state.customTo=''; state.customDrilldownCat=null; renderAnalysis(); });
-  el.querySelectorAll('[data-catbar]').forEach(g=>{
-    g.addEventListener('click', ()=>{
-      const cat = g.dataset.catbar;
-      state.customDrilldownCat = (state.customDrilldownCat === cat) ? null : cat;
-      renderAnalysis();
-    });
-  });
   const closeDrill = document.getElementById('closeDrilldown');
   if(closeDrill) closeDrill.addEventListener('click', ()=>{ state.customDrilldownCat = null; renderAnalysis(); });
+}
+
+// Global porque se llama desde un atributo onclick inline en el SVG (más confiable
+// que depender de addEventListener después de inyectar innerHTML)
+function handleCatBarClick(catName){
+  state.customDrilldownCat = (state.customDrilldownCat === catName) ? null : catName;
+  renderAnalysis();
 }
 
 /* ---------- View switching ---------- */
