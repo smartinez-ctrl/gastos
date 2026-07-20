@@ -43,6 +43,14 @@
   .cat-leader{flex:1;border-bottom:1px dotted var(--line);position:relative;top:-4px;}
   .cat-amt{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500;white-space:nowrap;}
   .cat-bar-bg{height:4px;background:var(--line);border-radius:2px;margin-top:4px;overflow:hidden;}
+  .catbar-row{display:flex;align-items:center;gap:12px;padding:7px 6px;cursor:pointer;border-radius:3px;}
+  .catbar-row:hover{background:var(--accent-soft);}
+  .catbar-row.selected{background:var(--accent-soft);}
+  .catbar-name{width:150px;flex-shrink:0;font-size:13px;display:flex;align-items:center;gap:8px;}
+  .catbar-row.selected .catbar-name{font-weight:600;}
+  .catbar-track{flex:1;height:20px;background:var(--paper);border-radius:3px;overflow:hidden;}
+  .catbar-fill{height:100%;border-radius:3px;}
+  .catbar-amt{font-family:'IBM Plex Mono',monospace;font-size:12px;min-width:90px;text-align:right;flex-shrink:0;}
   .cat-bar-fill{height:100%;border-radius:2px;}
   table{width:100%;border-collapse:collapse;font-size:13px;}
   th{text-align:left;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;padding:0 10px 8px;border-bottom:1px solid var(--ink);}
@@ -1631,22 +1639,18 @@ function renderAnalysis(){
     const customCatEntries = Object.entries(customByCat).sort((a,b)=>b[1]-a[1]);
     const maxCustomCat = customCatEntries.length ? customCatEntries[0][1] : 1;
 
-    // Desglose por categoría, mismo estilo que el Panel (cat-line + barra delgada),
-    // pero clickeable para el drill-down — en vez de un componente de gráfica aparte.
+    // Desglose por categoría: barra real y legible (no de 4px, no SVG), clickeable
     const catRows = customCatEntries.map(([name, amt]) => {
       const isSelected = state.customDrilldownCat === name;
+      const pct = Math.max((amt / maxCustomCat) * 100, 3);
+      const nameAttr = name.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"\\'");
       return `
-        <div class="cat-line" style="cursor:pointer;${isSelected?'background:var(--accent-soft);border-radius:3px;padding-left:6px;padding-right:6px;margin:0 -6px':''}"
-             onclick="handleCatBarClick('${name.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"\\'")}')">
-          <span class="cat-dot" style="background:${catColor(name)}"></span>
-          <span class="cat-name" style="${isSelected?'font-weight:600':''}">${name}</span>
-          <span class="cat-leader"></span>
-          <span class="cat-amt">${fmtMoney(amt)}</span>
+        <div class="catbar-row${isSelected?' selected':''}" onclick="handleCatBarClick('${nameAttr}')">
+          <span class="catbar-name"><span class="cat-dot" style="background:${catColor(name)}"></span>${name}</span>
+          <div class="catbar-track"><div class="catbar-fill" style="width:${pct.toFixed(1)}%;background:${catColor(name)}"></div></div>
+          <span class="catbar-amt">${fmtMoney(amt)}</span>
         </div>`;
     }).join('');
-    const catBarsBg = customCatEntries.map(([name, amt]) =>
-      `<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCustomCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`
-    ).join('');
 
     // Drill-down: movimientos de la categoría seleccionada, dentro del rango
     let drilldownSection = '';
@@ -1678,7 +1682,6 @@ function renderAnalysis(){
       <div class="card">
         <p class="card-title">Por categoría <span class="small-muted">(clic en una para ver sus movimientos)</span></p>
         ${catRows}
-        <div style="margin-top:10px">${catBarsBg}</div>
       </div>
       ${drilldownSection}
       <div class="card">
