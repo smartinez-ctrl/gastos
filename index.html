@@ -173,6 +173,8 @@ let state = {
   previewStatus: '',   // status/progress text while parsing
   previewDebugText: null, // raw extracted text, shown when parsing finds 0 rows
   pendingNewCards: [],  // cards suggested from a PDF, not yet saved to the DB
+  customFrom: '',       // rango personalizado en Análisis
+  customTo: '',
 };
 
 if(window.pdfjsLib){
@@ -1613,7 +1615,48 @@ function renderAnalysis(){
   const allCatNames = [...new Set([...Object.keys(curByCat), ...Object.keys(prevByCat)])]
     .sort((a,b) => (curByCat[b]||0) - (curByCat[a]||0));
 
+  // Periodo personalizado (Desde/Hasta) — independiente de los meses
+  let customSection = '';
+  const customTx = (state.customFrom && state.customTo)
+    ? state.transactions.filter(t => t.catTipo==='gasto' && t.fecha >= state.customFrom && t.fecha <= state.customTo)
+    : [];
+  if(state.customFrom && state.customTo){
+    const customTotal = customTx.reduce((s,t)=>s+Number(t.monto),0);
+    const customByCat = {}, customByCard = {};
+    customTx.forEach(t=>{
+      customByCat[t.catName] = (customByCat[t.catName]||0) + Number(t.monto);
+      customByCard[t.cardName] = (customByCard[t.cardName]||0) + Number(t.monto);
+    });
+    const customCatEntries = Object.entries(customByCat).sort((a,b)=>b[1]-a[1]);
+    const maxCustomCat = customCatEntries.length ? customCatEntries[0][1] : 1;
+    customSection = `
+      <div class="summary-row" style="margin-top:14px">
+        <div class="card stat"><div class="num spend">${fmtMoney(customTotal)}</div><div class="label">Gasto total del periodo</div></div>
+        <div class="card stat"><div class="num">${customTx.length}</div><div class="label">Movimientos</div></div>
+      </div>
+      ${customCatEntries.length ? `
+      <div class="card">
+        <p class="card-title">Por categoría</p>
+        ${customCatEntries.map(([name,amt])=>`<div class="cat-line"><span class="cat-dot" style="background:${catColor(name)}"></span><span class="cat-name">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
+        <div style="margin-top:10px">${customCatEntries.map(([name,amt])=>`<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCustomCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`).join('')}</div>
+      </div>
+      <div class="card">
+        <p class="card-title">Por tarjeta</p>
+        ${Object.entries(customByCard).sort((a,b)=>b[1]-a[1]).map(([name,amt])=>`<div class="cat-line"><span class="card-pill" style="min-width:90px">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
+      </div>` : `<div class="card"><div class="empty-state">Sin gastos categorizados en ese rango.</div></div>`}
+    `;
+  }
+
   el.innerHTML = `
+    <div class="card">
+      <p class="card-title">Periodo personalizado</p>
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+        <div><label>Desde</label><input type="date" id="customFrom" value="${state.customFrom}"></div>
+        <div><label>Hasta</label><input type="date" id="customTo" value="${state.customTo}"></div>
+        ${(state.customFrom || state.customTo) ? `<button class="ghost" id="clearCustomRange">Limpiar</button>` : ''}
+      </div>
+      ${customSection}
+    </div>
     <div class="card">
       <p class="card-title">Gasto mensual — últimos ${monthsAsc.length} meses con datos</p>
       <svg viewBox="0 0 ${chartW} ${chartH}" style="width:100%;height:auto">
@@ -1643,6 +1686,11 @@ function renderAnalysis(){
         </tbody>
       </table>`}
     </div>`;
+
+  document.getElementById('customFrom').addEventListener('change', (e)=>{ state.customFrom = e.target.value; renderAnalysis(); });
+  document.getElementById('customTo').addEventListener('change', (e)=>{ state.customTo = e.target.value; renderAnalysis(); });
+  const clearBtn = document.getElementById('clearCustomRange');
+  if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customFrom=''; state.customTo=''; renderAnalysis(); });
 }
 
 /* ---------- View switching ---------- */
