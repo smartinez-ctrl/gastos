@@ -189,6 +189,7 @@ let state = {
   dashDrilldownCat: null,  // igual que customDrilldownCat pero para el Panel
   dashDrilldownCard: null,
   dashDrilldownTipo: null, // para el click en la tarjeta de Ahorro/Ingreso
+  highlightTxId: null, // resalta un movimiento al llegar desde un drill-down
 };
 
 if(window.pdfjsLib){
@@ -1069,10 +1070,11 @@ function renderDashboard(){
           <p class="card-title" style="margin:0">Movimientos — ${label} <span class="small-muted">(${drillTx.length})</span></p>
           <button class="ghost" id="closeDashDrilldown">Cerrar</button>
         </div>
+        <p class="hint" style="margin:6px 0 10px">Clic en un movimiento para editarlo en Movimientos.</p>
         <table>
           <thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Tarjeta</th><th style="text-align:right">Monto</th></tr></thead>
           <tbody>
-            ${drillTx.map(t=>`<tr><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="cat-pill" style="background:${catColor(t.catName)}22;color:${catColor(t.catName)}">${t.catName||'—'}</span></td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>`).join('')}
+            ${drillTx.map(t=>`<tr style="cursor:pointer" onclick="goToMovimiento('${t.id}','${t.fecha}')"><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="cat-pill" style="background:${catColor(t.catName)}22;color:${catColor(t.catName)}">${t.catName||'—'}</span></td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>`).join('')}
           </tbody>
         </table>
       </div>`;
@@ -1122,6 +1124,19 @@ function handleDashTipoClick(tipo){
   state.dashDrilldownCat = null;
   state.dashDrilldownCard = null;
   renderDashboard();
+}
+
+// Lleva a Movimientos y resalta ese renglón — se llama desde las tablas de
+// drill-down (Panel, Análisis) al hacer click en un movimiento específico.
+function goToMovimiento(id, fecha){
+  state.filterCard = '';
+  state.filterCat = '';
+  state.txSearch = '';
+  state.txRangeActive = false;
+  state.currentMonth = monthKey(fecha);
+  state.highlightTxId = id;
+  state.currentView = 'transactions';
+  renderAll();
 }
 // Agrupa todos los movimientos con cuota_total (compras a meses / MSI) por
 // descripción normalizada + tarjeta, y arma una tarjeta de avance por plan.
@@ -1242,7 +1257,7 @@ function renderTransactions(){
         <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead>
         <tbody>
           ${monthTx.map(t=>`
-            <tr>
+            <tr id="txrow-${t.id}" style="${t.id===state.highlightTxId?'background:var(--accent-soft)':''}">
               <td>${t.fecha}</td>
               <td>${t.descripcion}${t.cuota_total ? `<span class="msi-pill ${t.cuota_actual>=t.cuota_total?'done':''}" title="${t.cuota_actual>=t.cuota_total?'Última cuota':`Faltan ${t.cuota_total - t.cuota_actual} cuota(s)`}">MSI ${t.cuota_actual}/${t.cuota_total}</span>` : ''}</td>
               <td>
@@ -1262,6 +1277,23 @@ function renderTransactions(){
         </tbody>
       </table>`}
     </div>`;
+
+  if(state.highlightTxId){
+    const rowEl = document.getElementById(`txrow-${state.highlightTxId}`);
+    if(rowEl){
+      rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const idToClear = state.highlightTxId;
+      setTimeout(()=>{
+        if(state.highlightTxId === idToClear){
+          state.highlightTxId = null;
+          const stillThere = document.getElementById(`txrow-${idToClear}`);
+          if(stillThere) stillThere.style.background = '';
+        }
+      }, 2200);
+    } else {
+      state.highlightTxId = null;
+    }
+  }
 
   document.getElementById('txModeSel').addEventListener('change', (e)=>{
     state.txRangeActive = e.target.value === 'range';
@@ -1770,11 +1802,12 @@ function renderAnalysis(){
             <p class="card-title" style="margin:0">Movimientos — ${state.customDrilldownCat} <span class="small-muted">(${drillTx.length})</span></p>
             <button class="ghost" id="closeDrilldown">Cerrar</button>
           </div>
+          <p class="hint" style="margin:6px 0 10px">Clic en un movimiento para editarlo en Movimientos.</p>
           <table>
             <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th style="text-align:right">Monto</th></tr></thead>
             <tbody>
               ${drillTx.map(t=>`
-                <tr><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>
+                <tr style="cursor:pointer" onclick="goToMovimiento('${t.id}','${t.fecha}')"><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>
               `).join('')}
             </tbody>
           </table>
