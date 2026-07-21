@@ -188,6 +188,7 @@ let state = {
   showLiquidatedMsi: false,
   dashDrilldownCat: null,  // igual que customDrilldownCat pero para el Panel
   dashDrilldownCard: null,
+  dashDrilldownTipo: null, // para el click en la tarjeta de Ahorro/Ingreso
 };
 
 if(window.pdfjsLib){
@@ -1056,9 +1057,11 @@ function renderDashboard(){
   }).join('');
 
   let dashDrilldownHtml = '';
-  if(state.dashDrilldownCat || state.dashDrilldownCard){
-    const label = state.dashDrilldownCat || state.dashDrilldownCard;
-    const drillTx = monthTx.filter(t => state.dashDrilldownCat ? t.catName === state.dashDrilldownCat : t.cardName === state.dashDrilldownCard)
+  if(state.dashDrilldownCat || state.dashDrilldownCard || state.dashDrilldownTipo){
+    const tipoLabels = { ahorro: 'Ahorro este mes', ingreso: 'Ingreso este mes' };
+    const label = state.dashDrilldownCat || state.dashDrilldownCard || tipoLabels[state.dashDrilldownTipo];
+    const drillTx = (state.dashDrilldownTipo ? monthTxAll.filter(t => t.catTipo === state.dashDrilldownTipo)
+        : monthTx.filter(t => state.dashDrilldownCat ? t.catName === state.dashDrilldownCat : t.cardName === state.dashDrilldownCard))
       .sort((a,b)=> b.fecha.localeCompare(a.fecha));
     dashDrilldownHtml = `
       <div class="card">
@@ -1067,9 +1070,9 @@ function renderDashboard(){
           <button class="ghost" id="closeDashDrilldown">Cerrar</button>
         </div>
         <table>
-          <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th style="text-align:right">Monto</th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Tarjeta</th><th style="text-align:right">Monto</th></tr></thead>
           <tbody>
-            ${drillTx.map(t=>`<tr><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>`).join('')}
+            ${drillTx.map(t=>`<tr><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="cat-pill" style="background:${catColor(t.catName)}22;color:${catColor(t.catName)}">${t.catName||'—'}</span></td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>`).join('')}
           </tbody>
         </table>
       </div>`;
@@ -1079,9 +1082,9 @@ function renderDashboard(){
     ${uncatBanner}
     <div class="summary-row">
       <div class="card stat"><div class="num spend">${fmtMoney(total)}</div><div class="label">Gasto total · ${monthLabel(state.currentMonth)}</div></div>
-      ${totalIngreso>0 ? `<div class="card stat"><div class="num" style="color:var(--accent)">${fmtMoney(totalIngreso)}</div><div class="label">Ingreso total</div></div>
+      ${totalIngreso>0 ? `<div class="card stat" style="cursor:pointer" onclick="handleDashTipoClick('ingreso')"><div class="num" style="color:var(--accent)">${fmtMoney(totalIngreso)}</div><div class="label">Ingreso total</div></div>
       <div class="card stat"><div class="num">${fmtMoney(totalIngreso-total)}</div><div class="label">Balance neto</div></div>` : ''}
-      ${totalAhorro>0 ? `<div class="card stat"><div class="num" style="color:#3C9AA6">${fmtMoney(totalAhorro)}</div><div class="label">Ahorro este mes</div></div>` : ''}
+      ${totalAhorro>0 ? `<div class="card stat" style="cursor:pointer" onclick="handleDashTipoClick('ahorro')"><div class="num" style="color:#3C9AA6">${fmtMoney(totalAhorro)}</div><div class="label">Ahorro este mes</div></div>` : ''}
       <div class="card stat"><div class="num">${monthTx.length}</div><div class="label">Movimientos categorizados</div></div>
       <div class="card stat"><div class="num" style="font-size:20px">${topCard?topCard[0]:'—'}</div><div class="label">Tarjeta con más gasto ${topCard?'('+fmtMoney(topCard[1])+')':''}</div></div>
     </div>
@@ -1097,7 +1100,7 @@ function renderDashboard(){
     ${installmentsHtml}`;
 
   const closeDashDrill = document.getElementById('closeDashDrilldown');
-  if(closeDashDrill) closeDashDrill.addEventListener('click', ()=>{ state.dashDrilldownCat=null; state.dashDrilldownCard=null; renderDashboard(); });
+  if(closeDashDrill) closeDashDrill.addEventListener('click', ()=>{ state.dashDrilldownCat=null; state.dashDrilldownCard=null; state.dashDrilldownTipo=null; renderDashboard(); });
   const toggleMsi = document.getElementById('toggleLiquidatedMsi');
   if(toggleMsi) toggleMsi.addEventListener('click', ()=>{ state.showLiquidatedMsi = !state.showLiquidatedMsi; renderDashboard(); });
 }
@@ -1105,11 +1108,19 @@ function renderDashboard(){
 function handleDashCatClick(name){
   state.dashDrilldownCat = (state.dashDrilldownCat === name) ? null : name;
   state.dashDrilldownCard = null;
+  state.dashDrilldownTipo = null;
   renderDashboard();
 }
 function handleDashCardClick(name){
   state.dashDrilldownCard = (state.dashDrilldownCard === name) ? null : name;
   state.dashDrilldownCat = null;
+  state.dashDrilldownTipo = null;
+  renderDashboard();
+}
+function handleDashTipoClick(tipo){
+  state.dashDrilldownTipo = (state.dashDrilldownTipo === tipo) ? null : tipo;
+  state.dashDrilldownCat = null;
+  state.dashDrilldownCard = null;
   renderDashboard();
 }
 // Agrupa todos los movimientos con cuota_total (compras a meses / MSI) por
