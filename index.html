@@ -183,6 +183,7 @@ let state = {
   pendingNewCards: [],  // cards suggested from a PDF, not yet saved to the DB
   customFrom: '',       // rango personalizado en Análisis
   customTo: '',
+  customRangeIsManual: false, // true cuando el usuario elige un rango a mano (deja de seguir el tab de mes)
   customDrilldownCat: null, // categoría en la que se hizo click, para ver sus movimientos
 };
 
@@ -963,13 +964,32 @@ async function undoLastImport(){
 }
 
 /* ---------- Month strip ---------- */
+function monthBounds(mk){
+  const [y, m] = mk.split('-').map(Number);
+  const pad = n => String(n).padStart(2,'0');
+  const lastDay = new Date(y, m, 0).getDate(); // día 0 del mes siguiente = último día de este mes
+  return { from: `${mk}-01`, to: `${mk}-${pad(lastDay)}` };
+}
+
 function renderMonthStrip(){
   const months = allMonths();
   if(!state.currentMonth || !months.includes(state.currentMonth)) state.currentMonth = months[0];
+  // El periodo de Análisis sigue al tab de mes activo por default, a menos que
+  // el usuario haya escogido explícitamente "Todo el año" u otro rango.
+  if(!state.customRangeIsManual){
+    const b = monthBounds(state.currentMonth);
+    state.customFrom = b.from;
+    state.customTo = b.to;
+  }
   const strip = document.getElementById('monthStrip');
   strip.innerHTML = months.map(m => `<div class="month-tab ${m===state.currentMonth?'active':''}" data-month="${m}">${monthLabel(m)}</div>`).join('');
   strip.querySelectorAll('.month-tab').forEach(el=>{
-    el.addEventListener('click', ()=>{ state.currentMonth = el.dataset.month; renderAll(); });
+    el.addEventListener('click', ()=>{
+      state.currentMonth = el.dataset.month;
+      state.customRangeIsManual = false; // volver a seguir el tab de mes
+      state.customDrilldownCat = null;
+      renderAll();
+    });
   });
 }
 
@@ -1705,7 +1725,7 @@ function renderAnalysis(){
         </div>
         <div><label>Desde</label><input type="date" id="customFrom" value="${state.customFrom}"></div>
         <div><label>Hasta</label><input type="date" id="customTo" value="${state.customTo}"></div>
-        ${(state.customFrom || state.customTo) ? `<button class="ghost" id="clearCustomRange">Limpiar</button>` : ''}
+        ${state.customRangeIsManual ? `<button class="ghost" id="clearCustomRange">Volver a "${monthLabel(state.currentMonth)}"</button>` : ''}
       </div>
       ${customSection}
     </div>
@@ -1739,8 +1759,8 @@ function renderAnalysis(){
       </table>`}
     </div>`;
 
-  document.getElementById('customFrom').addEventListener('change', (e)=>{ state.customFrom = e.target.value; state.customDrilldownCat=null; renderAnalysis(); });
-  document.getElementById('customTo').addEventListener('change', (e)=>{ state.customTo = e.target.value; state.customDrilldownCat=null; renderAnalysis(); });
+  document.getElementById('customFrom').addEventListener('change', (e)=>{ state.customFrom = e.target.value; state.customRangeIsManual = true; state.customDrilldownCat=null; renderAnalysis(); });
+  document.getElementById('customTo').addEventListener('change', (e)=>{ state.customTo = e.target.value; state.customRangeIsManual = true; state.customDrilldownCat=null; renderAnalysis(); });
   document.getElementById('quickRange').addEventListener('change', (e)=>{
     const preset = e.target.value;
     if(!preset) return;
@@ -1758,10 +1778,12 @@ function renderAnalysis(){
       state.customFrom = fmt(new Date(y, 0, 1));
       state.customTo = fmt(new Date(y, 11, 31));
     }
+    state.customRangeIsManual = true;
+    state.customDrilldownCat = null;
     renderAnalysis();
   });
   const clearBtn = document.getElementById('clearCustomRange');
-  if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customFrom=''; state.customTo=''; state.customDrilldownCat=null; renderAnalysis(); });
+  if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customRangeIsManual = false; state.customDrilldownCat=null; renderAll(); });
   const closeDrill = document.getElementById('closeDrilldown');
   if(closeDrill) closeDrill.addEventListener('click', ()=>{ state.customDrilldownCat = null; renderAnalysis(); });
 }
