@@ -1832,7 +1832,122 @@ function renderAnalysis(){
     `;
   }
 
+  // ============================================================
+  // Insights para saber dónde recortar: tendencia por categoría,
+  // cargos recurrentes, mayores subidas, y promedio vs mes actual.
+  // Todo sobre los últimos 6 meses con datos.
+  // ============================================================
+  const trendMonths = monthsAsc.slice(-6);
+  const catByMonth = {};
+  state.transactions.filter(t=>t.catTipo==='gasto' && trendMonths.includes(monthKey(t.fecha))).forEach(t=>{
+    if(!catByMonth[t.catName]) catByMonth[t.catName] = {};
+    catByMonth[t.catName][monthKey(t.fecha)] = (catByMonth[t.catName][monthKey(t.fecha)]||0) + Number(t.monto);
+  });
+  const trendCats = Object.keys(catByMonth).sort((a,b)=>{
+    const totalA = trendMonths.reduce((s,m)=>s+(catByMonth[a][m]||0),0);
+    const totalB = trendMonths.reduce((s,m)=>s+(catByMonth[b][m]||0),0);
+    return totalB - totalA;
+  });
+
+  // 1) Tabla categoría x mes, con flecha de tendencia (primer vs último mes con dato)
+  const trendTableHtml = trendMonths.length < 2 ? `<div class="empty-state">Necesitas al menos 2 meses con datos.</div>` : `
+    <table>
+      <thead><tr><th>Categoría</th>${trendMonths.map(m=>`<th style="text-align:right">${monthLabel(m)}</th>`).join('')}<th></th></tr></thead>
+      <tbody>
+        ${trendCats.map(cat=>{
+          const vals = trendMonths.map(m=>catByMonth[cat][m]||0);
+          const first = vals.find(v=>v>0) || 0;
+          const last = [...vals].reverse().find(v=>v>0) || 0;
+          const trendUp = last > first * 1.05;
+          const trendDown = last < first * 0.95;
+          return `<tr>
+            <td><span class="cat-dot" style="background:${catColor(cat)};display:inline-block;margin-right:6px"></span>${cat}</td>
+            ${vals.map(v=>`<td class="amt-cell">${v>0?fmtMoney(v):'—'}</td>`).join('')}
+            <td style="text-align:center">${trendUp?'<span style="color:var(--alert)">▲</span>':trendDown?'<span style="color:var(--accent)">▼</span>':'·'}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+
+  // 2) Cargos recurrentes (mismo comercio + monto, en al menos 3 de los últimos 6 meses)
+  const recurGroups = {};
+  state.transactions.filter(t=>t.catTipo==='gasto' && trendMonths.includes(monthKey(t.fecha))).forEach(t=>{
+    const mk = merchantKey(t.descripcion);
+    if(!mk) return;
+    const key = mk + '|' + Math.round(Number(t.monto));
+    if(!recurGroups[key]) recurGroups[key] = { desc: t.descripcion, monto: Number(t.monto), catName: t.catName, months: new Set() };
+    recurGroups[key].months.add(monthKey(t.fecha));
+  });
+  const recurring = Object.values(recurGroups)
+    .filter(g => g.months.size >= 3)
+    .sort((a,b) => (b.monto*b.months.size) - (a.monto*a.months.size));
+  const recurringHtml = recurring.length === 0 ? `<div class="empty-state">No detecté cargos recurrentes claros todavía.</div>` : `
+    <table>
+      <thead><tr><th>Descripción</th><th>Categoría</th><th style="text-align:center">Meses</th><th style="text-align:right">Monto/mes</th><th style="text-align:right">Impacto (${trendMonths.length}m)</th></tr></thead>
+      <tbody>
+        ${recurring.map(g=>`<tr>
+          <td>${g.desc}</td>
+          <td><span class="cat-pill" style="background:${catColor(g.catName)}22;color:${catColor(g.catName)}">${g.catName||'—'}</span></td>
+          <td style="text-align:center">${g.months.size}/${trendMonths.length}</td>
+          <td class="amt-cell">${fmtMoney(g.monto)}</td>
+          <td class="amt-cell">${fmtMoney(g.monto*g.months.size)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+  // 3) Ranking de mayores subidas mes contra mes, por categoría
+  const risingCats = allCatNames
+    .map(name => ({ name, delta: (curByCat[name]||0) - (prevByCat[name]||0) }))
+    .filter(x => x.delta > 0)
+    .sort((a,b)=> b.delta - a.delta)
+    .slice(0, 8);
+  const risingHtml = risingCats.length === 0 ? `<div class="empty-state">Nada subió respecto al mes anterior — vas bien.</div>` : `
+    ${risingCats.map(x=>`<div class="cat-line">
+      <span class="cat-dot" style="background:${catColor(x.name)}"></span>
+      <span class="cat-name">${x.name}</span>
+      <span class="cat-leader"></span>
+      <span class="cat-amt" style="color:var(--alert)">+${fmtMoney(x.delta)}</span>
+    </div>`).join('')}`;
+
+  // 4) Promedio histórico (excluyendo el mes actual) vs el mes actual, por categoría
+  const histMonths = trendMonths.filter(m => m !== state.currentMonth);
+  const avgVsCurrent = trendCats.map(cat=>{
+    const vals = histMonths.map(m => catByMonth[cat][m]||0);
+    const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+    const cur = catByMonth[cat][state.currentMonth] || 0;
+    return { name: cat, avg, cur, diff: cur - avg };
+  }).filter(x => x.avg > 0 || x.cur > 0)
+    .sort((a,b) => b.diff - a.diff);
+  const avgVsCurrentHtml = avgVsCurrent.length === 0 ? `<div class="empty-state">Sin suficiente historial todavía.</div>` : `
+    <table>
+      <thead><tr><th>Categoría</th><th style="text-align:right">Promedio (${histMonths.length}m)</th><th style="text-align:right">${monthLabel(state.currentMonth)}</th><th style="text-align:right">Diferencia</th></tr></thead>
+      <tbody>
+        ${avgVsCurrent.map(x=>`<tr>
+          <td><span class="cat-dot" style="background:${catColor(x.name)};display:inline-block;margin-right:6px"></span>${x.name}</td>
+          <td class="amt-cell" style="color:var(--muted)">${fmtMoney(x.avg)}</td>
+          <td class="amt-cell">${fmtMoney(x.cur)}</td>
+          <td class="amt-cell" style="color:${x.diff>0?'var(--alert)':'var(--accent)'}">${x.diff>0?'+':''}${fmtMoney(x.diff)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+
   el.innerHTML = `
+    <div class="card">
+      <p class="card-title">Tendencia por categoría — últimos ${trendMonths.length} meses <span class="small-muted">(▲ subiendo, ▼ bajando)</span></p>
+      ${trendTableHtml}
+    </div>
+    <div class="card">
+      <p class="card-title">Cargos recurrentes <span class="small-muted">(mismo comercio y monto, 3+ de los últimos ${trendMonths.length} meses — candidatos a revisar/cancelar)</span></p>
+      ${recurringHtml}
+    </div>
+    <div class="card">
+      <p class="card-title">Mayores subidas vs mes anterior</p>
+      ${risingHtml}
+    </div>
+    <div class="card">
+      <p class="card-title">Tu promedio vs ${monthLabel(state.currentMonth)} <span class="small-muted">(rojo = vas arriba de tu normal)</span></p>
+      ${avgVsCurrentHtml}
+    </div>
     <div class="card">
       <p class="card-title">Periodo personalizado</p>
       <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
