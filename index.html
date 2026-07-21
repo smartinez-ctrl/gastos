@@ -185,6 +185,9 @@ let state = {
   customTo: '',
   customRangeIsManual: false, // true cuando el usuario elige un rango a mano (deja de seguir el tab de mes)
   customDrilldownCat: null, // categoría en la que se hizo click, para ver sus movimientos
+  showLiquidatedMsi: false,
+  dashDrilldownCat: null,  // igual que customDrilldownCat pero para el Panel
+  dashDrilldownCard: null,
 };
 
 if(window.pdfjsLib){
@@ -1028,6 +1031,50 @@ function renderDashboard(){
   }
   const installmentsHtml = renderInstallmentsCard();
 
+  const catRowsDash = catEntries.map(([name,amt])=>{
+    const isSelected = state.dashDrilldownCat === name;
+    const pct = Math.max((amt/maxCat*100), 3);
+    const nameAttr = name.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"\\'");
+    return `<div class="catbar-row${isSelected?' selected':''}" onclick="handleDashCatClick('${nameAttr}')">
+      <span class="catbar-name"><span class="cat-dot" style="background:${catColor(name)}"></span>${name}</span>
+      <div class="catbar-track"><div class="catbar-fill" style="width:${pct.toFixed(1)}%;background:${catColor(name)}"></div></div>
+      <span class="catbar-amt">${fmtMoney(amt)}</span>
+    </div>`;
+  }).join('');
+
+  const cardEntries = Object.entries(byCard).sort((a,b)=>b[1]-a[1]);
+  const maxCardAmt = cardEntries.length ? cardEntries[0][1] : 1;
+  const cardRowsDash = cardEntries.map(([name,amt])=>{
+    const isSelected = state.dashDrilldownCard === name;
+    const pct = Math.max((amt/maxCardAmt*100), 3);
+    const nameAttr = name.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"\\'");
+    return `<div class="catbar-row${isSelected?' selected':''}" onclick="handleDashCardClick('${nameAttr}')">
+      <span class="catbar-name">${name}</span>
+      <div class="catbar-track"><div class="catbar-fill" style="width:${pct.toFixed(1)}%;background:var(--accent)"></div></div>
+      <span class="catbar-amt">${fmtMoney(amt)}</span>
+    </div>`;
+  }).join('');
+
+  let dashDrilldownHtml = '';
+  if(state.dashDrilldownCat || state.dashDrilldownCard){
+    const label = state.dashDrilldownCat || state.dashDrilldownCard;
+    const drillTx = monthTx.filter(t => state.dashDrilldownCat ? t.catName === state.dashDrilldownCat : t.cardName === state.dashDrilldownCard)
+      .sort((a,b)=> b.fecha.localeCompare(a.fecha));
+    dashDrilldownHtml = `
+      <div class="card">
+        <div class="flex-between">
+          <p class="card-title" style="margin:0">Movimientos — ${label} <span class="small-muted">(${drillTx.length})</span></p>
+          <button class="ghost" id="closeDashDrilldown">Cerrar</button>
+        </div>
+        <table>
+          <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th style="text-align:right">Monto</th></tr></thead>
+          <tbody>
+            ${drillTx.map(t=>`<tr><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
   el.innerHTML = `
     ${uncatBanner}
     <div class="summary-row">
@@ -1039,16 +1086,31 @@ function renderDashboard(){
       <div class="card stat"><div class="num" style="font-size:20px">${topCard?topCard[0]:'—'}</div><div class="label">Tarjeta con más gasto ${topCard?'('+fmtMoney(topCard[1])+')':''}</div></div>
     </div>
     <div class="card">
-      <p class="card-title">Gasto por categoría</p>
-      ${catEntries.length===0 ? `<div class="empty-state">Nada categorizado todavía este mes.</div>` : `
-      ${catEntries.map(([name,amt])=>`<div class="cat-line"><span class="cat-dot" style="background:${catColor(name)}"></span><span class="cat-name">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
-      <div style="margin-top:10px">${catEntries.map(([name,amt])=>`<div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${(amt/maxCat*100).toFixed(1)}%;background:${catColor(name)}"></div></div>`).join('')}</div>`}
+      <p class="card-title">Gasto por categoría <span class="small-muted">(clic en una para ver sus movimientos)</span></p>
+      ${catEntries.length===0 ? `<div class="empty-state">Nada categorizado todavía este mes.</div>` : catRowsDash}
     </div>
     <div class="card">
-      <p class="card-title">Gasto por tarjeta</p>
-      ${Object.entries(byCard).sort((a,b)=>b[1]-a[1]).map(([name,amt])=>`<div class="cat-line"><span class="card-pill" style="min-width:90px">${name}</span><span class="cat-leader"></span><span class="cat-amt">${fmtMoney(amt)}</span></div>`).join('')}
+      <p class="card-title">Gasto por tarjeta <span class="small-muted">(clic en una para ver sus movimientos)</span></p>
+      ${cardRowsDash}
     </div>
+    ${dashDrilldownHtml}
     ${installmentsHtml}`;
+
+  const closeDashDrill = document.getElementById('closeDashDrilldown');
+  if(closeDashDrill) closeDashDrill.addEventListener('click', ()=>{ state.dashDrilldownCat=null; state.dashDrilldownCard=null; renderDashboard(); });
+  const toggleMsi = document.getElementById('toggleLiquidatedMsi');
+  if(toggleMsi) toggleMsi.addEventListener('click', ()=>{ state.showLiquidatedMsi = !state.showLiquidatedMsi; renderDashboard(); });
+}
+
+function handleDashCatClick(name){
+  state.dashDrilldownCat = (state.dashDrilldownCat === name) ? null : name;
+  state.dashDrilldownCard = null;
+  renderDashboard();
+}
+function handleDashCardClick(name){
+  state.dashDrilldownCard = (state.dashDrilldownCard === name) ? null : name;
+  state.dashDrilldownCat = null;
+  renderDashboard();
 }
 // Agrupa todos los movimientos con cuota_total (compras a meses / MSI) por
 // descripción normalizada + tarjeta, y arma una tarjeta de avance por plan.
@@ -1063,11 +1125,18 @@ function renderInstallmentsCard(){
     groups[key].cuotaTotal = Math.max(groups[key].cuotaTotal, t.cuota_total);
     groups[key].monto = Number(t.monto); // se queda con el monto de la cuota más reciente vista
   });
-  const plans = Object.values(groups).sort((a,b)=> (b.cuotaTotal-b.cuotaMax) - (a.cuotaTotal-a.cuotaMax));
+  const allPlans = Object.values(groups).sort((a,b)=> (b.cuotaTotal-b.cuotaMax) - (a.cuotaTotal-a.cuotaMax));
+  const activePlans = allPlans.filter(p => (p.cuotaTotal - p.cuotaMax) > 0);
+  const liquidatedCount = allPlans.length - activePlans.length;
+  const plans = state.showLiquidatedMsi ? allPlans : activePlans;
+  if(plans.length === 0 && liquidatedCount === 0) return '';
   return `
     <div class="card">
-      <p class="card-title">Compras a meses (MSI)</p>
-      ${plans.map(p=>{
+      <div class="flex-between">
+        <p class="card-title" style="margin:0">Compras a meses (MSI)</p>
+        ${liquidatedCount > 0 ? `<button class="ghost" id="toggleLiquidatedMsi" style="font-size:11px;padding:4px 10px">${state.showLiquidatedMsi ? 'Ocultar liquidadas' : `Mostrar liquidadas (${liquidatedCount})`}</button>` : ''}
+      </div>
+      ${plans.length === 0 ? `<div class="empty-state" style="padding:16px 0">Sin planes MSI activos.</div>` : plans.map(p=>{
         const faltan = p.cuotaTotal - p.cuotaMax;
         const pct = Math.min(100, (p.cuotaMax / p.cuotaTotal * 100));
         return `<div style="margin-bottom:12px">
