@@ -1280,12 +1280,19 @@ function renderInstallmentsCard(){
   const liquidatedCount = allPlans.length - activePlans.length;
   const plans = state.showLiquidatedMsi ? allPlans : activePlans;
   if(plans.length === 0 && liquidatedCount === 0) return '';
+  const totalPendiente = activePlans.reduce((s,p)=> s + p.monto * (p.cuotaTotal - p.cuotaMax), 0);
+  const totalProximoMes = activePlans.reduce((s,p)=> s + p.monto, 0);
   return `
     <div class="card">
       <div class="flex-between">
         <p class="card-title" style="margin:0">Compras a meses (MSI)</p>
         ${liquidatedCount > 0 ? `<button class="ghost" id="toggleLiquidatedMsi" style="font-size:11px;padding:4px 10px">${state.showLiquidatedMsi ? 'Ocultar liquidadas' : `Mostrar liquidadas (${liquidatedCount})`}</button>` : ''}
       </div>
+      ${activePlans.length > 0 ? `
+      <div class="summary-row" style="margin-bottom:14px">
+        <div class="card stat"><div class="num" style="font-size:22px">${fmtMoney(totalPendiente)}</div><div class="label">Total pendiente (todos los planes activos)</div></div>
+        <div class="card stat"><div class="num" style="font-size:22px;color:var(--accent)">${fmtMoney(totalProximoMes)}</div><div class="label">A pagar el próximo mes en MSI</div></div>
+      </div>` : ''}
       ${plans.length === 0 ? `<div class="empty-state" style="padding:16px 0">Sin planes MSI activos.</div>` : plans.map(p=>{
         const faltan = p.cuotaTotal - p.cuotaMax;
         const pct = Math.min(100, (p.cuotaMax / p.cuotaTotal * 100));
