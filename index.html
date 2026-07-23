@@ -1112,6 +1112,12 @@ function renderDashboard(){
   const catEntries = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   const maxCat = catEntries.length ? catEntries[0][1] : 1;
 
+  // Estatus de importación: qué tarjetas ya tienen movimientos este mes y cuáles no
+  const cardsWithData = new Set(monthTxAll.map(t=>t.cardName));
+  const cardStatus = state.cards.map(c => ({ name: c.nombre, loaded: cardsWithData.has(c.nombre) }))
+    .sort((a,b) => (a.loaded === b.loaded) ? 0 : (a.loaded ? 1 : -1)); // faltantes primero
+  const missingCount = cardStatus.filter(c=>!c.loaded).length;
+
   const uncatBanner = uncatCount > 0 ? `
     <div class="card" style="background:var(--alert-soft);border-color:var(--alert)">
       <p style="margin:0;font-size:13px;color:var(--ink)">
@@ -1183,6 +1189,16 @@ function renderDashboard(){
       <div class="card stat"><div class="num">${monthTx.length}</div><div class="label">Movimientos categorizados</div></div>
       <div class="card stat"><div class="num" style="font-size:20px">${topCard?topCard[0]:'—'}</div><div class="label">Tarjeta con más gasto ${topCard?'('+fmtMoney(topCard[1])+')':''}</div></div>
     </div>
+    ${state.cards.length > 0 ? `
+    <div class="card">
+      <p class="card-title">Tarjetas cargadas — ${monthLabel(state.currentMonth)} ${missingCount>0 ? `<span class="small-muted" style="color:var(--alert)">(${missingCount} pendiente${missingCount===1?'':'s'})</span>` : `<span class="small-muted" style="color:var(--accent)">(todas al día)</span>`}</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${cardStatus.map(c=>`
+          <span class="chip" style="${c.loaded?'':'border-color:var(--alert);background:var(--alert-soft)'}">
+            ${c.loaded ? '✓' : '○'} ${c.name}
+          </span>`).join('')}
+      </div>
+    </div>` : ''}
     <div class="card">
       <p class="card-title">Gasto por categoría <span class="small-muted">(clic en una para ver sus movimientos)</span></p>
       ${catEntries.length===0 ? `<div class="empty-state">Nada categorizado todavía este mes.</div>` : catRowsDash}
