@@ -748,8 +748,11 @@ function parseSantanderChecking(rawText){
 }
 
 function detectInvexCard(rawText){
-  const m = rawText.match(/(Volaris\s+INVEX[^\n]{0,20}|INVEX\s+\d[^\n]{0,15})/i);
-  if(m) return m[1].replace(/\s{2,}/g,' ').trim();
+  // Patrón específico primero (evita capturar palabras sueltas de más líneas después)
+  const tight = rawText.match(/Volaris\s+INVEX\s+[\d.]+\s*-\s*[A-Za-zÀ-ÿ]+/i);
+  if(tight) return tight[0].replace(/\s{2,}/g,' ').trim();
+  const loose = rawText.match(/(Volaris\s+INVEX[^\n]{0,20}|INVEX\s+\d[^\n]{0,15})/i);
+  if(loose) return loose[1].replace(/\s{2,}/g,' ').trim();
   return 'Invex';
 }
 
