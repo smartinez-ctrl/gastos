@@ -747,10 +747,78 @@ function parseSantanderChecking(rawText){
   return results;
 }
 
+function detectInvexCard(rawText){
+  const m = rawText.match(/(Volaris\s+INVEX[^\n]{0,20}|INVEX\s+\d[^\n]{0,15})/i);
+  if(m) return m[1].replace(/\s{2,}/g,' ').trim();
+  return 'Invex';
+}
+
+function parseInvexCreditText(rawText){
+  const endIdx = rawText.search(/ATENCIÓN DE QUEJAS/i);
+  let windowText = endIdx === -1 ? rawText : rawText.slice(0, endIdx);
+
+  // Quitar líneas de subtotal (traen signo, contaminan el último renglón de cada bloque)
+  windowText = windowText
+    .replace(/Total de cargos[\s\S]{0,20}?[+-]\s*\$[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total cargos[\s\S]{0,20}?[+-]\s*\$[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total de abonos[\s\S]{0,20}?[+-]\s*\$[\d,]+\.\d{2}/gi, ' ')
+    .replace(/Total abonos[\s\S]{0,20}?[+-]\s*\$[\d,]+\.\d{2}/gi, ' ');
+
+  // Ancla: DOS fechas DD-Mon-YYYY seguidas (fecha operación + fecha cargo) —
+  // excluye naturalmente la tabla de "diferidos a meses" (una sola fecha por renglón).
+  const rowAnchor = /(\d{2})-([A-Za-zé]{3})-(\d{4})\s+\d{2}-[A-Za-zé]{3}-\d{4}\s+/gi;
+  const matches = [...windowText.matchAll(rowAnchor)];
+  const MESES_ABBR = {ene:0,feb:1,mar:2,abr:3,may:4,jun:5,jul:6,ago:7,sep:8,oct:9,nov:10,dic:11};
+
+  const results = [];
+  for(let i=0; i<matches.length; i++){
+    const m = matches[i];
+    const segStart = m.index + m[0].length;
+    const segEnd = i+1 < matches.length ? matches[i+1].index : Math.min(windowText.length, segStart+200);
+    const segment = windowText.slice(segStart, segEnd);
+
+    const signed = [...segment.matchAll(/([+-])\s*\$\s*([\d,]+\.\d{2})/g)];
+    if(signed.length === 0) continue;
+    const last = signed[signed.length-1];
+    // Un signo "-" puede ser un pago que le hiciste a la tarjeta (se excluye) o un
+    // cargo que el comercio te regresó/reembolsó (sí se importa, en negativo).
+    const isCredit = last[1] === '-';
+
+    const montoAbs = parseFloat(last[2].replace(/,/g,''));
+    if(isNaN(montoAbs) || montoAbs <= 0) continue;
+
+    // Cuota MSI: Invex la trae directo en la descripción como "NN OF NN"
+    const cuotaMatch = segment.match(/(\d+)\s*OF\s*(\d+)/i);
+    const cuotaActual = cuotaMatch ? parseInt(cuotaMatch[1],10) : null;
+    const cuotaTotal = cuotaMatch ? parseInt(cuotaMatch[2],10) : null;
+
+    let desc = segment.slice(0, last.index)
+      .replace(/\d+\s*OF\s*\d+/gi, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+      .slice(0, 80);
+    if(!desc) desc = 'Movimiento sin descripción';
+
+    if(isCredit && /PAGO RECIBIDO|GRACIAS POR SU PAGO|PAGO POR TRANSFERENCIA|PAGO EN LINEA|TRANSFEREN|DEPOSITO|DIFERIR|SU PAGO POR/i.test(desc)) continue; // pago a la tarjeta
+    const monto = isCredit ? -montoAbs : montoAbs;
+
+    const dia = parseInt(m[1], 10);
+    const mesTxt = m[2].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').slice(0,3);
+    const mesIdx = MESES_ABBR[mesTxt];
+    const year = parseInt(m[3], 10);
+    if(mesIdx === undefined) continue;
+    const fecha = `${year}-${String(mesIdx+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+
+    results.push({ fecha, descripcion: desc + (isCredit ? ' (reembolso/cargo regresado)' : ''), monto, cuotaActual, cuotaTotal });
+  }
+  return results;
+}
+
 const BANK_PARSERS = [
   { name: 'American Express', detect: t => /AMERICAN\s*EXPRESS/i.test(t), parse: parseAmexText, detectCard: detectAmexCardName },
   { name: 'Santander (tarjeta de crédito)', detect: t => /Santander/i.test(t) && /N[uú]mero de tarjeta/i.test(t), parse: parseSantanderCreditText, detectCard: detectSantanderCard },
   { name: 'Santander (cuenta de débito)', detect: t => /Santander/i.test(t) && /SALDO FINAL DEL PER[IÍ]ODO ANTERIOR/i.test(t) && !/N[uú]mero de tarjeta/i.test(t), parse: parseSantanderChecking, detectCard: () => 'Santander Débito', noCategoryGuess: true },
+  { name: 'Invex', detect: t => /INVEX/i.test(t) && /N[uú]mero de la tarjeta/i.test(t), parse: parseInvexCreditText, detectCard: detectInvexCard },
   // Próximo banco: sube un PDF de ejemplo al chat y se agrega aquí un parser nuevo.
 ];
 
