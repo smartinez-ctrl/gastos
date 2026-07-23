@@ -272,9 +272,9 @@ function fileToBase64(file){
 // estados de cuenta escaneados de varias páginas puede pesar varios MB y
 // rebasar el límite de tamaño de request de las funciones serverless de
 // Vercel (4.5MB) — por imágenes mucho más ligeras que sí caben.
-async function pdfToImages(file, maxDimension=1500, quality=0.72, maxPages=25){
+async function pdfToImages(file, maxDimension=1500, quality=0.72, maxPages=25, password){
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer, password: password || undefined }).promise;
   const numPages = Math.min(pdf.numPages, maxPages);
   const images = [];
   for(let i=1; i<=numPages; i++){
@@ -390,9 +390,9 @@ function allMonths(){
    ============================================================ */
 const MESES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 
-async function extractPdfText(file){
+async function extractPdfText(file, password){
   const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  const pdf = await pdfjsLib.getDocument({data: buf, password: password || undefined}).promise;
   let full = '';
   let amountColX = null; // posición X de la columna "Importe" — se detecta una vez y se reusa en páginas siguientes que no repiten el encabezado
   for(let i=1; i<=pdf.numPages; i++){
@@ -754,22 +754,47 @@ const BANK_PARSERS = [
   // Próximo banco: sube un PDF de ejemplo al chat y se agrega aquí un parser nuevo.
 ];
 
+function isPdfPasswordError(err){
+  return err && (err.name === 'PasswordException' || /password/i.test(err.message||''));
+}
+
 async function handlePdfUpload(file){
   state.previewStatus = 'Leyendo PDF...';
   state.previewDebugText = null;
   renderImport();
+  let password = null;
   try{
-    const text = await extractPdfText(file);
+    let text;
+    try{
+      text = await extractPdfText(file, password);
+    }catch(err){
+      if(!isPdfPasswordError(err)) throw err;
+      password = window.prompt('Este PDF tiene contraseña. Escríbela para poder leerlo:');
+      if(!password){
+        state.previewStatus = '';
+        showToast('Cancelado — este PDF necesita su contraseña para poder leerse');
+        renderImport();
+        return;
+      }
+      try{
+        text = await extractPdfText(file, password);
+      }catch(err2){
+        state.previewStatus = '';
+        showToast(isPdfPasswordError(err2) ? 'Contraseña incorrecta, intenta de nuevo' : 'Error leyendo el PDF: ' + err2.message);
+        renderImport();
+        return;
+      }
+    }
     const bankParser = BANK_PARSERS.find(b => b.detect(text));
     if(!bankParser){
-      await handleAiPdfExtract(file);
+      await handleAiPdfExtract(file, password);
       return;
     }
     state.previewBank = bankParser.name;
     const parsed = bankParser.parse(text);
     if(parsed.length === 0){
       state.previewDebugText = text;
-      await handleAiPdfExtract(file);
+      await handleAiPdfExtract(file, password);
       return;
     }
 
@@ -833,16 +858,16 @@ async function handlePdfUpload(file){
 // un endpoint serverless (/api/parse-pdf) que a su vez llama a la API de
 // Claude para leerlo y devolver los movimientos en JSON. Así ya no hace
 // falta pegar el PDF en el chat — el propio sistema lo procesa.
-async function handleAiPdfExtract(file){
+async function handleAiPdfExtract(file, password){
   state.previewDebugText = state.previewDebugText || null; // conserva el debug si ya se seteó antes de llamar
   state.previewStatus = 'Este PDF no tiene capa de texto o es de un banco sin parser rápido — convirtiendo páginas a imagen y leyendo con IA (puede tardar 20-40s)...';
   renderImport();
   try{
-    let images = await pdfToImages(file);
+    let images = await pdfToImages(file, 1500, 0.72, 25, password);
     let totalSize = images.reduce((s,img)=>s+img.length, 0);
     if(totalSize > 3.8 * 1024 * 1024){
       // Muy pesado para el límite de Vercel (4.5MB) incluso como imágenes — reintenta más comprimido.
-      images = await pdfToImages(file, 1100, 0.55);
+      images = await pdfToImages(file, 1100, 0.55, 25, password);
       totalSize = images.reduce((s,img)=>s+img.length, 0);
     }
     if(images.length === 0){ throw new Error('No se pudo renderizar ninguna página del PDF'); }
