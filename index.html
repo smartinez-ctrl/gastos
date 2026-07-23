@@ -1159,6 +1159,18 @@ function renderDashboard(){
     </div>`;
   }).join('');
 
+  // Un tile igual para cada tarjeta registrada (aunque no haya gastado nada este
+  // mes en ella), para verlas todas parejo de un vistazo — clickeable también.
+  const cardTiles = state.cards.map(c=>{
+    const amt = byCard[c.nombre] || 0;
+    const isSelected = state.dashDrilldownCard === c.nombre;
+    const nameAttr = c.nombre.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"\\'");
+    return `<div class="card stat" style="cursor:pointer;${isSelected?'border-color:var(--ink)':''}${amt===0?';opacity:0.55':''}" onclick="handleDashCardClick('${nameAttr}')">
+      <div class="num" style="font-size:19px">${fmtMoney(amt)}</div>
+      <div class="label">${c.nombre}</div>
+    </div>`;
+  }).join('');
+
   let dashDrilldownHtml = '';
   if(state.dashDrilldownCat || state.dashDrilldownCard || state.dashDrilldownTipo){
     const tipoLabels = { ahorro: 'Ahorro este mes', ingreso: 'Ingreso este mes' };
@@ -1208,7 +1220,7 @@ function renderDashboard(){
     </div>
     <div class="card">
       <p class="card-title">Gasto por tarjeta <span class="small-muted">(clic en una para ver sus movimientos)</span></p>
-      ${cardRowsDash}
+      <div class="summary-row">${cardTiles}</div>
     </div>
     ${dashDrilldownHtml}
     ${installmentsHtml}`;
