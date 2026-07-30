@@ -190,6 +190,7 @@ let state = {
   dashDrilldownCard: null,
   dashDrilldownTipo: null, // para el click en la tarjeta de Ahorro/Ingreso
   highlightTxId: null, // resalta un movimiento al llegar desde un drill-down
+  compareDrilldown: null, // { name, which: 'cur'|'prev' } para la tabla mes-vs-mes de Análisis
 };
 
 if(window.pdfjsLib){
@@ -2103,7 +2104,7 @@ function renderAnalysis(){
       </svg>
     </div>
     <div class="card">
-      <p class="card-title">${monthLabel(state.currentMonth)} vs ${prevMonth ? monthLabel(prevMonth) : 'mes anterior (sin datos)'}, por categoría</p>
+      <p class="card-title">${monthLabel(state.currentMonth)} vs ${prevMonth ? monthLabel(prevMonth) : 'mes anterior (sin datos)'}, por categoría <span class="small-muted">(clic en un monto para ver el detalle)</span></p>
       ${allCatNames.length === 0 ? `<div class="empty-state">Sin datos suficientes todavía.</div>` : `
       <table>
         <thead><tr><th>Categoría</th><th style="text-align:right">${monthLabel(state.currentMonth)}</th><th style="text-align:right">${prevMonth ? monthLabel(prevMonth) : '—'}</th><th style="text-align:right">Cambio</th></tr></thead>
@@ -2114,16 +2115,38 @@ function renderAnalysis(){
             const delta = prev > 0 ? ((cur-prev)/prev*100) : (cur > 0 ? 100 : 0);
             const deltaColor = delta > 0 ? 'var(--alert)' : (delta < 0 ? 'var(--accent)' : 'var(--muted)');
             const arrow = delta > 0.5 ? '▲' : (delta < -0.5 ? '▼' : '·');
+            const nameAttr = name.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,"\\'");
+            const curSel = state.compareDrilldown && state.compareDrilldown.name===name && state.compareDrilldown.which==='cur';
+            const prevSel = state.compareDrilldown && state.compareDrilldown.name===name && state.compareDrilldown.which==='prev';
             return `
             <tr>
               <td><span class="cat-dot" style="background:${catColor(name)};display:inline-block;margin-right:6px"></span>${name}</td>
-              <td class="amt-cell">${fmtMoney(cur)}</td>
-              <td class="amt-cell" style="color:var(--muted)">${fmtMoney(prev)}</td>
+              <td class="amt-cell" style="cursor:${cur>0?'pointer':'default'};${curSel?'text-decoration:underline;font-weight:600':''}" ${cur>0?`onclick="handleCompareDrillClick('${nameAttr}','cur')"`:''}>${fmtMoney(cur)}</td>
+              <td class="amt-cell" style="color:var(--muted);cursor:${prev>0?'pointer':'default'};${prevSel?'text-decoration:underline;font-weight:600':''}" ${prev>0?`onclick="handleCompareDrillClick('${nameAttr}','prev')"`:''}>${fmtMoney(prev)}</td>
               <td class="amt-cell" style="color:${deltaColor}">${arrow} ${Math.abs(delta).toFixed(0)}%</td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>`}
+      ${state.compareDrilldown ? (()=>{
+        const src = state.compareDrilldown.which === 'cur' ? curTx : prevTx;
+        const monthLbl = state.compareDrilldown.which === 'cur' ? monthLabel(state.currentMonth) : monthLabel(prevMonth);
+        const drillTx = src.filter(t => t.catName === state.compareDrilldown.name).sort((a,b)=> b.fecha.localeCompare(a.fecha));
+        return `
+        <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+          <div class="flex-between">
+            <p class="card-title" style="margin:0">Detalle — ${state.compareDrilldown.name} · ${monthLbl} <span class="small-muted">(${drillTx.length})</span></p>
+            <button class="ghost" id="closeCompareDrilldown">Cerrar</button>
+          </div>
+          <p class="hint" style="margin:6px 0 10px">Clic en un movimiento para editarlo en Movimientos.</p>
+          <table>
+            <thead><tr><th>Fecha</th><th>Descripción</th><th>Tarjeta</th><th style="text-align:right">Monto</th></tr></thead>
+            <tbody>
+              ${drillTx.map(t=>`<tr style="cursor:pointer" onclick="goToMovimiento('${t.id}','${t.fecha}')"><td>${t.fecha}</td><td>${t.descripcion}</td><td><span class="card-pill">${t.cardName}</span></td><td class="amt-cell">${fmtMoney(Number(t.monto))}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+      })() : ''}
     </div>`;
 
   document.getElementById('customFrom').addEventListener('change', (e)=>{ state.customFrom = e.target.value; state.customRangeIsManual = true; state.customDrilldownCat=null; renderAnalysis(); });
@@ -2153,12 +2176,23 @@ function renderAnalysis(){
   if(clearBtn) clearBtn.addEventListener('click', ()=>{ state.customRangeIsManual = false; state.customDrilldownCat=null; renderAll(); });
   const closeDrill = document.getElementById('closeDrilldown');
   if(closeDrill) closeDrill.addEventListener('click', ()=>{ state.customDrilldownCat = null; renderAnalysis(); });
+  const closeCompareDrill = document.getElementById('closeCompareDrilldown');
+  if(closeCompareDrill) closeCompareDrill.addEventListener('click', ()=>{ state.compareDrilldown = null; renderAnalysis(); });
 }
 
 // Global porque se llama desde un atributo onclick inline en el SVG (más confiable
 // que depender de addEventListener después de inyectar innerHTML)
 function handleCatBarClick(catName){
   state.customDrilldownCat = (state.customDrilldownCat === catName) ? null : catName;
+  renderAnalysis();
+}
+
+function handleCompareDrillClick(name, which){
+  if(state.compareDrilldown && state.compareDrilldown.name === name && state.compareDrilldown.which === which){
+    state.compareDrilldown = null;
+  } else {
+    state.compareDrilldown = { name, which };
+  }
   renderAnalysis();
 }
 
