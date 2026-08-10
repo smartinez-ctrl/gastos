@@ -117,9 +117,11 @@
 
 <div id="loginScreen" class="login-screen" style="display:none">
   <h1>Ledger<span class="accent-dot">.</span></h1>
-  <p>Inicia sesión con tu correo. Te llega un link mágico, sin contraseña.</p>
+  <p>Inicia sesión con tu correo.</p>
   <input type="email" id="loginEmail" placeholder="tu@correo.com">
-  <button class="primary" id="loginBtn" style="width:100%">Enviar link de acceso</button>
+  <input type="password" id="loginPassword" placeholder="Contraseña (opcional)" style="margin-top:-4px">
+  <button class="primary" id="loginPasswordBtn" style="width:100%">Entrar con contraseña</button>
+  <button class="ghost" id="loginBtn" style="width:100%;margin-top:8px">O mándame un link mágico</button>
   <p class="small-muted" id="loginStatus" style="margin-top:12px"></p>
 </div>
 
@@ -226,6 +228,15 @@ document.getElementById('loginBtn').addEventListener('click', async ()=>{
   document.getElementById('loginStatus').textContent = 'Enviando...';
   const { error } = await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: window.location.origin } });
   document.getElementById('loginStatus').textContent = error ? 'Error: '+error.message : 'Revisa tu correo y da clic en el link.';
+});
+document.getElementById('loginPasswordBtn').addEventListener('click', async ()=>{
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  if(!email || !password){ document.getElementById('loginStatus').textContent = 'Escribe correo y contraseña.'; return; }
+  document.getElementById('loginStatus').textContent = 'Entrando...';
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error) document.getElementById('loginStatus').textContent = 'Error: '+error.message;
+  // Si funciona, onAuthStateChange (SIGNED_IN) ya se encarga de meterte a la app.
 });
 document.getElementById('logoutBtn').addEventListener('click', async ()=>{ await sb.auth.signOut(); });
 
