@@ -1635,7 +1635,7 @@ function renderImport(){
                 <div style="display:flex;align-items:center;gap:5px">
                   <button type="button" data-flipsign="${r.id}" title="${r.monto<0?'Marcado como ingreso — clic para volverlo gasto':'Marcado como gasto — clic para volverlo ingreso'}"
                     style="background:${r.monto<0?'var(--accent-soft)':'var(--alert-soft)'};border:1px solid ${r.monto<0?'var(--accent)':'var(--alert)'};color:${r.monto<0?'var(--accent)':'var(--alert)'};border-radius:4px;width:22px;height:22px;cursor:pointer;font-weight:700;font-size:13px;flex-shrink:0;line-height:1">${r.monto<0?'+':'−'}</button>
-                  <input type="number" step="0.01" data-pfield="monto" data-pid2="${r.id}" value="${r.monto}" style="width:78px">
+                  <input type="number" step="0.01" min="0" data-pfield="monto" data-pid2="${r.id}" value="${Math.abs(r.monto)}" style="width:78px">
                 </div>
               </td>
               <td><select data-pfield="card" data-pid2="${r.id}" style="min-width:150px;${needsCard(r)?'border-color:var(--alert);color:var(--alert)':''}"><option value="" ${!r.card?'selected':''}>— elegir —</option>${[...state.cards, ...state.pendingNewCards].map(c=>`<option value="${c.id}" ${c.id===r.card?'selected':''}>${c.nombre}${state.pendingNewCards.find(p=>p.id===c.id)?' (nueva)':''}</option>`).join('')}</select></td>
@@ -1749,7 +1749,10 @@ function renderImport(){
       inp.addEventListener('change', ()=>{
         const row = state.previewRows.find(r=>r.id===inp.dataset.pid2);
         const field = inp.dataset.pfield;
-        if(field === 'monto') row[field] = parseFloat(inp.value);
+        if(field === 'monto'){
+          const sign = row.monto < 0 ? -1 : 1; // conserva la dirección (el input solo muestra el monto absoluto)
+          row[field] = sign * Math.abs(parseFloat(inp.value) || 0);
+        }
         else if(field === 'cuotaActual' || field === 'cuotaTotal') row[field] = inp.value ? parseInt(inp.value,10) : null;
         else row[field] = inp.value;
         if(field === 'category' || field === 'card' || field === 'monto') renderImport();
