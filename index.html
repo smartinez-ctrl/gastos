@@ -343,6 +343,22 @@ function guessCategoryId(desc){
 }
 // Extrae un "nombre de comercio" limpio de una descripción de movimiento,
 // quitando códigos de referencia (tokens con dígitos) para usarlo como keyword.
+// Normaliza una descripción para comparar duplicados: quita códigos de
+// referencia tipo "TAS 1408291E1" / "GEQ 790916MJ0" que a veces aparecen al
+// final (o no) según el método de extracción usado (parser nativo vs IA),
+// para que la misma transacción real no se le escape a la detección de
+// duplicados solo porque un import trae el código y el otro no.
+function dupDescKey(desc){
+  return (desc||'')
+    .toUpperCase()
+    .replace(/\s+[A-Z]{2,4}\s+[A-Z0-9]{4,15}$/, '') // código de referencia al final
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+function dupKey(fecha, monto, descripcion){
+  return `${fecha}|${Math.round(Number(monto)*100)}|${dupDescKey(descripcion)}`;
+}
+
 function merchantKey(desc){
   if(!desc) return null;
   const words = desc.toLowerCase()
@@ -920,13 +936,13 @@ async function handlePdfUpload(file){
     // subir varios meses seguidos o si repites sin querer el mismo PDF.
     const existingKeys = new Map();
     state.transactions.forEach(t => {
-      const k = `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`;
+      const k = dupKey(t.fecha, t.monto, t.descripcion);
       if(!existingKeys.has(k)) existingKeys.set(k, { tarjeta: t.cardName, categoria: t.catName });
     });
 
     state.previewSortDir = null; // cada import nuevo empieza en orden del PDF/CSV
     state.previewRows = parsed.map(p => {
-      const key = `${p.fecha}|${Math.round(p.monto*100)}|${p.descripcion.toLowerCase().trim()}`;
+      const key = dupKey(p.fecha, p.monto, p.descripcion);
       const dupInfo = existingKeys.get(key);
       const isDup = !!dupInfo;
       existingKeys.set(key, dupInfo || { tarjeta: 'este mismo import', categoria: null }); // para detectar también duplicados repetidos dentro del mismo PDF
@@ -994,12 +1010,12 @@ async function handleAiPdfExtract(file, password){
     state.pendingNewCards = [];
     const existingKeys = new Map();
     state.transactions.forEach(t => {
-      const k = `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`;
+      const k = dupKey(t.fecha, t.monto, t.descripcion);
       if(!existingKeys.has(k)) existingKeys.set(k, { tarjeta: t.cardName, categoria: t.catName });
     });
     state.previewSortDir = null; // cada import nuevo empieza en orden del PDF/CSV
     state.previewRows = parsed.map(p => {
-      const key = `${p.fecha}|${Math.round(Number(p.monto)*100)}|${String(p.descripcion).toLowerCase().trim()}`;
+      const key = dupKey(p.fecha, p.monto, p.descripcion);
       const dupInfo = existingKeys.get(key);
       const isDup = !!dupInfo;
       existingKeys.set(key, dupInfo || { tarjeta: 'este mismo import', categoria: null });
@@ -1734,7 +1750,7 @@ function renderImport(){
     let skipped = 0, dupCount = 0;
     const existingKeys = new Map();
     state.transactions.forEach(t => {
-      const k = `${t.fecha}|${Math.round(Number(t.monto)*100)}|${(t.descripcion||'').toLowerCase().trim()}`;
+      const k = dupKey(t.fecha, t.monto, t.descripcion);
       if(!existingKeys.has(k)) existingKeys.set(k, { tarjeta: t.cardName, categoria: t.catName });
     });
     const rows = [];
@@ -1751,7 +1767,7 @@ function renderImport(){
         const { data } = await sb.from('tarjetas').insert({ nombre: cardName }).select().single();
         card = data; state.cards.push(card);
       }
-      const key = `${date}|${Math.round(amount*100)}|${desc.toLowerCase().trim()}`;
+      const key = dupKey(date, amount, desc);
       const dupInfo = existingKeys.get(key);
       const isDup = !!dupInfo;
       if(isDup) dupCount++;
