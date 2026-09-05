@@ -205,6 +205,7 @@ let state = {
   dashDrilldownTipo: null, // para el click en la tarjeta de Ahorro/Ingreso
   highlightTxId: null, // resalta un movimiento al llegar desde un drill-down
   compareDrilldown: null, // { name, which: 'cur'|'prev' } para la tabla mes-vs-mes de Análisis
+  reviewedNoCharge: new Set(), // tarjetas marcadas "sin cargos este mes" (tarjetaId|mes)
 };
 
 if(window.pdfjsLib){
@@ -263,10 +264,11 @@ async function ensureDefaults(){
 
 /* ---------- Data loading ---------- */
 async function loadAll(){
-  const [{data:cards}, {data:cats}, {data:tx}] = await Promise.all([
+  const [{data:cards}, {data:cats}, {data:tx}, {data:reviewed}] = await Promise.all([
     sb.from('tarjetas').select('*').order('nombre'),
     sb.from('categorias').select('*').order('nombre'),
     sb.from('movimientos').select('*').order('fecha', {ascending:false}),
+    sb.from('tarjeta_mes_revisado').select('*'),
   ]);
   state.cards = cards || [];
   state.categories = cats || [];
@@ -279,6 +281,7 @@ async function loadAll(){
       catTipo: cat ? (cat.tipo || 'gasto') : null,
     };
   });
+  state.reviewedNoCharge = new Set((reviewed||[]).map(r => `${r.tarjeta_id}|${r.mes}`));
 }
 
 /* ---------- Utils ---------- */
@@ -1140,10 +1143,17 @@ function renderDashboard(){
   const maxCat = catEntries.length ? catEntries[0][1] : 1;
 
   // Estatus de importación: qué tarjetas ya tienen movimientos este mes y cuáles no
+  // (o están marcadas a mano como "revisada, sin cargos este mes")
   const cardsWithData = new Set(monthTxAll.map(t=>t.cardName));
-  const cardStatus = state.cards.map(c => ({ name: c.nombre, loaded: cardsWithData.has(c.nombre) }))
-    .sort((a,b) => (a.loaded === b.loaded) ? 0 : (a.loaded ? 1 : -1)); // faltantes primero
-  const missingCount = cardStatus.filter(c=>!c.loaded).length;
+  const cardStatus = state.cards.map(c => ({
+    id: c.id, name: c.nombre,
+    loaded: cardsWithData.has(c.nombre),
+    reviewedNoCharge: state.reviewedNoCharge.has(`${c.id}|${state.currentMonth}`),
+  })).sort((a,b) => {
+    const doneA = a.loaded || a.reviewedNoCharge, doneB = b.loaded || b.reviewedNoCharge;
+    return (doneA === doneB) ? 0 : (doneA ? 1 : -1); // faltantes primero
+  });
+  const missingCount = cardStatus.filter(c=>!c.loaded && !c.reviewedNoCharge).length;
 
   const uncatBanner = uncatCount > 0 ? `
     <div class="card" style="background:var(--alert-soft);border-color:var(--alert)">
@@ -1232,10 +1242,15 @@ function renderDashboard(){
     <div class="card">
       <p class="card-title">Tarjetas cargadas — ${monthLabel(state.currentMonth)} ${missingCount>0 ? `<span class="small-muted" style="color:var(--alert)">(${missingCount} pendiente${missingCount===1?'':'s'})</span>` : `<span class="small-muted" style="color:var(--accent)">(todas al día)</span>`}</p>
       <div style="display:flex;flex-wrap:wrap;gap:8px">
-        ${cardStatus.map(c=>`
-          <span class="chip" style="${c.loaded?'':'border-color:var(--alert);background:var(--alert-soft)'}">
-            ${c.loaded ? '✓' : '○'} ${c.name}
-          </span>`).join('')}
+        ${cardStatus.map(c=>{
+          if(c.loaded){
+            return `<span class="chip">✓ ${c.name}</span>`;
+          }
+          if(c.reviewedNoCharge){
+            return `<span class="chip" style="border-color:var(--accent);background:var(--accent-soft)">✓ ${c.name} <span class="small-muted" style="font-style:italic">(sin cargos)</span> <button data-unmarknocharge="${c.id}" title="Quitar marca" style="background:none;border:none;cursor:pointer;color:var(--muted);padding:0 0 0 4px">✕</button></span>`;
+          }
+          return `<span class="chip" style="border-color:var(--alert);background:var(--alert-soft)">○ ${c.name} <button data-marknocharge="${c.id}" style="background:none;border:1px solid var(--alert);border-radius:8px;cursor:pointer;color:var(--alert);font-size:10px;padding:1px 6px;margin-left:4px">sin cargos este mes</button></span>`;
+        }).join('')}
       </div>
     </div>` : ''}
     <div class="card">
@@ -1253,6 +1268,23 @@ function renderDashboard(){
   if(closeDashDrill) closeDashDrill.addEventListener('click', ()=>{ state.dashDrilldownCat=null; state.dashDrilldownCard=null; state.dashDrilldownTipo=null; renderDashboard(); });
   const toggleMsi = document.getElementById('toggleLiquidatedMsi');
   if(toggleMsi) toggleMsi.addEventListener('click', ()=>{ state.showLiquidatedMsi = !state.showLiquidatedMsi; renderDashboard(); });
+  el.querySelectorAll('[data-marknocharge]').forEach(btn=>{
+    btn.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const { error } = await sb.from('tarjeta_mes_revisado').insert({ tarjeta_id: btn.dataset.marknocharge, mes: state.currentMonth });
+      if(error){ showToast('Error: '+error.message); return; }
+      await loadAll(); renderDashboard();
+    });
+  });
+  el.querySelectorAll('[data-unmarknocharge]').forEach(btn=>{
+    btn.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const { error } = await sb.from('tarjeta_mes_revisado').delete()
+        .eq('tarjeta_id', btn.dataset.unmarknocharge).eq('mes', state.currentMonth);
+      if(error){ showToast('Error: '+error.message); return; }
+      await loadAll(); renderDashboard();
+    });
+  });
 }
 
 function handleDashCatClick(name){
