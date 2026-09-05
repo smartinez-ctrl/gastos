@@ -341,6 +341,19 @@ function guessCategoryId(desc){
   const otro = state.categories.find(c=>c.nombre==='Otro');
   return otro ? otro.id : (state.categories[0] && state.categories[0].id);
 }
+// Igual que guessCategoryId, pero sin el fallback a "Otro" — para imports por IA
+// (crédito y débito mezclados) donde forzar una categoría de gasto a un
+// ingreso/traspaso sin match real de palabra clave sería peor que dejarlo
+// sin categorizar (así no cuenta en los totales hasta que se revise a mano).
+function guessCategoryIdStrict(desc){
+  const d = desc.toLowerCase();
+  for(const cat of state.categories){
+    for(const kw of (cat.keywords||[])){
+      if(kw && d.includes(kw.toLowerCase())) return cat.id;
+    }
+  }
+  return null;
+}
 // Extrae un "nombre de comercio" limpio de una descripción de movimiento,
 // quitando códigos de referencia (tokens con dígitos) para usarlo como keyword.
 // Normaliza una descripción para comparar duplicados: quita códigos de
@@ -1023,7 +1036,7 @@ async function handleAiPdfExtract(file, password){
         id: uid(), include: !isDup, isDup, dupInfo,
         fecha: p.fecha, descripcion: String(p.descripcion), monto: Number(p.monto),
         card: null,
-        category: guessCategoryId(String(p.descripcion)),
+        category: guessCategoryIdStrict(String(p.descripcion)), // null si no hay match real, no forzar "Otro"
         cuotaActual: p.cuota_actual || null, cuotaTotal: p.cuota_total || null,
       };
     });

@@ -21,11 +21,15 @@ Si es un estado de cuenta de TARJETA DE CRÉDITO (una sola columna de importe):
 - Si el movimiento es parte de una compra a meses sin intereses (MSI) y el estado de cuenta indica el número de pago (ej. "09 DE 12"), llena cuota_actual y cuota_total; si no aplica, déjalos en null.
 
 Si es un estado de cuenta de CUENTA DE CHEQUES/DÉBITO (columnas FECHA, DESCRIPCIÓN, DEPÓSITO, RETIRO, SALDO — puede haber varias sub-cuentas en el mismo documento, ej. "Supercuenta Cheques", "Mis Metas", etc.):
-- Cada renglón tiene SOLO una de las dos columnas (DEPÓSITO o RETIRO) con valor — la otra queda vacía. Usa ese valor como "monto".
+- Cada renglón tiene SOLO una de las dos columnas (DEPÓSITO o RETIRO) con valor — la otra queda vacía. Usa ese valor como base del "monto".
+- IMPORTANTE — el signo de "monto" indica la dirección real del dinero, tú decides cuál es viendo la columna o el texto, no lo dejes en positivo por default:
+  · Si es un RETIRO / CARGO (dinero que SALE de la cuenta — ej. "PAGO TRANSFERENCIA SPEI ENVIADO A...", "DOMICILIACIÓN PAGO SERVICIO...", "CARGO PAGO TARJETA CREDITO"): monto POSITIVO.
+  · Si es un DEPÓSITO / ABONO (dinero que ENTRA a la cuenta — ej. "ABONO TRANSFERENCIA SPEI RECIBIDO DE...", "DEPOSITO..."): monto NEGATIVO.
+  Básate en la columna donde el estado de cuenta puso el número (RETIRO vs DEPÓSITO) como fuente de verdad; si la imagen no deja ver la columna claramente, usa las palabras clave de arriba.
 - La columna SALDO es el saldo acumulado de la cuenta después de ese movimiento — NUNCA la uses como monto de un movimiento, ni la incluyas como si fuera un renglón aparte.
-- Incluye TANTO depósitos como retiros como movimientos separados — no los filtres ni asumas cuáles son gasto real; eso se decide después en la app. Usa siempre monto POSITIVO para ambos (no le pongas signo negativo a los retiros).
+- Incluye TANTO depósitos como retiros como movimientos separados — no los filtres, la app decide después cuáles cuentan como gasto real vs traspasos, pero el signo tiene que venir correcto desde aquí.
 - descripcion: usa el concepto principal de la línea (ej. "PAGO TRANSFERENCIA SPEI ENVIADO A SCOTIABANK", "DOMICILIACION PAGO SERVICIO AMERICAN EXPRESS", "ABONO TRANSFERENCIA SPEI RECIBIDO DE BBVA MEXICO") — puedes incluir el nombre del banco/cliente contraparte si aporta contexto, y omite CLAVES DE RASTREO muy largas (ej. "2026010340014BMOVP000449918480") y RFC. PERO conserva números de folio/referencia cortos (ej. "4580102", "0122569") cuando el mismo día haya varias domiciliaciones o cargos con el mismo concepto y monto — es la única forma de distinguirlos como movimientos distintos y no confundirlos con un duplicado. Ante la duda, incluye el folio corto en la descripción.
-- Si el mismo estado de cuenta tiene varias sub-cuentas (ej. cuenta de cheques + Mis Metas + Dinero Creciente), inclúyelas todas como movimientos, cada una con su propia fecha/descripción/monto.
+- Si el mismo estado de cuenta tiene varias sub-cuentas (ej. cuenta de cheques + Mis Metas + Dinero Creciente), inclúyelas todas como movimientos, cada una con su propia fecha/descripción/monto/signo.
 
 Reglas generales para ambos casos:
 - fecha en formato YYYY-MM-DD. Convierte abreviaturas de mes en español (ene, feb, mar, abr, may, jun, jul, ago, sep, oct, nov, dic).
