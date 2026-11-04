@@ -1160,7 +1160,9 @@ function renderDashboard(){
   const monthAhorro = monthTxAll.filter(t=>t.catTipo==='ahorro');
   const uncatCount = monthTxAll.length - monthTx.length - monthIngreso.length - monthNeutral.length - monthAhorro.length;
   const total = monthTx.reduce((s,t)=>s+Number(t.monto),0);
-  const totalIngreso = monthIngreso.reduce((s,t)=>s+Number(t.monto),0);
+  // Un ingreso cuenta por su magnitud: hay meses guardados en positivo (ene-jul) y
+  // otros en negativo (ago en adelante) — la categoría de tipo "ingreso" ya dice la dirección.
+  const totalIngreso = monthIngreso.reduce((s,t)=>s+Math.abs(Number(t.monto)),0);
   const totalAhorro = monthAhorro.reduce((s,t)=>s+Number(t.monto),0);
   const byCard = {}, byCat = {};
   monthTx.forEach(t=>{
@@ -1417,7 +1419,7 @@ function renderTransactions(){
     : monthLabel(state.currentMonth);
 
   const sumGasto = monthTx.filter(t=>t.catTipo==='gasto').reduce((s,t)=>s+Number(t.monto),0);
-  const sumIngreso = monthTx.filter(t=>t.catTipo==='ingreso').reduce((s,t)=>s+Number(t.monto),0);
+  const sumIngreso = monthTx.filter(t=>t.catTipo==='ingreso').reduce((s,t)=>s+Math.abs(Number(t.monto)),0);
   const sumNeutral = monthTx.filter(t=>t.catTipo==='neutral').reduce((s,t)=>s+Number(t.monto),0);
   const sumAhorro = monthTx.filter(t=>t.catTipo==='ahorro').reduce((s,t)=>s+Number(t.monto),0);
   const sumUncat = monthTx.filter(t=>!t.catName).length;
@@ -1487,7 +1489,7 @@ function renderTransactions(){
                   ${state.categories.map(c=>`<option value="${c.id}" ${c.id===t.categoria_id?'selected':''}>${c.nombre}</option>`).join('')}
                 </select>
               </td>
-              <td class="amt-cell" style="${t.catTipo==='ingreso'?'color:var(--accent)':(t.catTipo==='neutral'?'color:var(--muted)':(t.catTipo==='ahorro'?'color:#3C9AA6':''))}">${fmtMoney(Number(t.monto))}</td>
+              <td class="amt-cell" style="${t.catTipo==='ingreso'?'color:var(--accent)':(t.catTipo==='neutral'?'color:var(--muted)':(t.catTipo==='ahorro'?'color:#3C9AA6':''))}">${fmtMoney(t.catTipo==='ingreso' ? Math.abs(Number(t.monto)) : Number(t.monto))}</td>
               <td class="row-actions"><button data-del="${t.id}" title="Eliminar">✕</button></td>
             </tr>`).join('')}
         </tbody>
